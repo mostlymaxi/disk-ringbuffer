@@ -3,10 +3,15 @@ use std::{borrow::Cow, slice, str, sync::atomic::AtomicUsize};
 const QUEUE_SIZE: usize = (4096 * 20_000) - (usize::BITS / 8) as usize;
 
 #[derive(Debug)]
-enum PageError {
+pub enum PageError {
     PageFull = -10,
     PageExists = -11,
     ReadError = -12,
+}
+
+pub enum ReadResult<'a> {
+    Msg(Cow<'a, str>),
+    Continue,
 }
 
 #[repr(C)]
@@ -31,7 +36,7 @@ extern "C" {
     fn raw_qpage_pop(p: *const CPage, start_byte: usize) -> CSlice;
 }
 
-struct Page(*mut CPage);
+pub struct Page(*mut CPage);
 
 unsafe impl Send for Page {}
 
@@ -42,14 +47,14 @@ impl Drop for Page {
 }
 
 impl Page {
-    fn new<P: AsRef<str>>(path: P) -> Self {
+    pub fn new<P: AsRef<str>>(path: P) -> Self {
         let path = path.as_ref();
         let c_page = unsafe { raw_qpage_new_rs(path.as_ptr(), path.len()) };
 
         Page(c_page)
     }
 
-    fn push<T: AsRef<[u8]>>(&self, input: T) -> Result<usize, PageError> {
+    pub fn push<T: AsRef<[u8]>>(&self, input: T) -> Result<usize, PageError> {
         let input = input.as_ref();
 
         unsafe {
@@ -62,22 +67,26 @@ impl Page {
     }
 
     // TODO: think of a better way to return result with READ_EMPTY in mind
-    fn pop(&self, start_byte: usize) -> Result<Cow<'_, str>, i32> {
+    pub fn try_pop(&self, start_byte: usize) -> Result<Option<ReadResult>, i32> {
         let slice = unsafe {
             let cs = raw_qpage_pop(self.0, start_byte);
 
-            if cs.read_status < 0 {
-                return Err(cs.read_status);
-            }
+            let cs = match cs.read_status {
+                -12 => return Err(-12),
+                0 => cs,
+                1 => return Ok(Some(ReadResult::Continue)),
+                2 => return Ok(None),
+                _ => unreachable!(),
+            };
 
             slice::from_raw_parts(cs.ptr, cs.len)
         };
 
-        Ok(String::from_utf8_lossy(slice))
+        Ok(Some(ReadResult::Msg(String::from_utf8_lossy(slice))))
     }
 }
 
-struct RingBuf {}
+// struct RingBuf {}
 
 #[test]
 fn sequential_test() {
@@ -92,10 +101,16 @@ fn sequential_test() {
     for i in 0..NUM {
         let i = i.to_string();
         let _ = x.push(&i).unwrap();
+        eprintln!("{:?}", i);
     }
 
     for i in 0..NUM {
-        let p = x.pop(read_idx).unwrap();
+        let p = x.try_pop(read_idx).unwrap().unwrap();
+        let p = match p {
+            ReadResult::Msg(m) => m,
+            ReadResult::Continue => panic!("todo"),
+        };
+
         read_idx += p.len() + 1;
         assert!(i.to_string() == p);
     }
@@ -105,16 +120,6 @@ fn sequential_test() {
     std::fs::remove_file(FILE).unwrap();
 }
 
-/// TODO
-/// make simple polling ringbuf
-/// (figure out steps needed for that lol^)
-
-fn main() {
-    let x = Page::new("testing");
-    x.push("asdf").unwrap();
-    let out = x.pop(0).unwrap();
-
-    eprintln!("{:#?}", out);
-
-    std::fs::remove_file("testing").unwrap();
-}
+// TODO:
+// make simple polling ringbuf
+// (figure out steps needed for that lol^)

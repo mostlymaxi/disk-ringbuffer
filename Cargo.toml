@@ -1,8 +1,16 @@
 [package]
-name = "queue-attempt-2"
-version = "0.1.0"
+name = "disk-ringbuffer"
+version = "0.0.1"
 edition = "2021"
-
+authors = ["Maxi Saparov <max.saparov@gmail.com>"]
+description = "lock free on disk ringbuffer to be used in the implementation of Franz"
+documentation = "https://docs.rs/disk-ringbuffer"
+homepage = "https://github.com/MostlyMax/disk-ringbuffer"
+repository = "https://github.com/MostlyMax/disk-ringbuffer"
+readme = "README.md"
+keywords = ["ringbuffer", "queue"]
+license = "MIT"
+categories = ["ringbuffer"]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
