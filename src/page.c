@@ -21,7 +21,7 @@
 
 // i use a single atomic size_t to keep track of both:
 // - how many writers are currently writing (in queue)
-// - the next avilable index to write to
+// - the next available index to write to
 //
 // this is annoying as hell because it means i have to use the fancy bit
 // arithmetic to keep track of which bits are for what (most significant 8 are
@@ -40,6 +40,7 @@ const size_t QUEUE_MAGIC_MASK = QUEUE_MAGIC_NUM - 1;
 #define READ_SUCCESS 0
 #define READ_FINISHED 1
 #define READ_EMPTY 2
+#define WRITE_PAGE_FULL 0
 typedef struct {
   size_t len;
   char *ptr;
@@ -134,7 +135,7 @@ int raw_qpage_push(RawQPage *p, char *buf, size_t len) {
 
     atomic_fetch_sub_explicit(&p->write_idx_lock, QUEUE_MAGIC_NUM,
                               memory_order_relaxed);
-    return PAGE_FULL;
+    return WRITE_PAGE_FULL;
   }
 
   memcpy(&p->buf[start], buf, len);

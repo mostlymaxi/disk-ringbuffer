@@ -2,13 +2,6 @@ use std::{borrow::Cow, slice, str, sync::atomic::AtomicUsize};
 
 const QUEUE_SIZE: usize = (4096 * 20_000) - (usize::BITS / 8) as usize;
 
-#[derive(Debug)]
-pub enum PageError {
-    PageFull = -10,
-    PageExists = -11,
-    ReadError = -12,
-}
-
 pub enum ReadResult<'a> {
     Msg(Cow<'a, str>),
     Continue,
@@ -54,14 +47,14 @@ impl Page {
         Page(c_page)
     }
 
-    pub fn push<T: AsRef<[u8]>>(&self, input: T) -> Result<usize, PageError> {
+    pub fn try_push<T: AsRef<[u8]>>(&self, input: T) -> Result<usize, i32> {
         let input = input.as_ref();
 
         unsafe {
             match raw_qpage_push(self.0, input.as_ptr(), input.len()) {
-                -10 => Err(PageError::PageFull),
+                i @ ..=-1 => Err(i),
+                // a return value of 0 implies the page is full
                 i @ 0.. => Ok(i as usize),
-                _ => unreachable!(),
             }
         }
     }
@@ -72,7 +65,7 @@ impl Page {
             let cs = raw_qpage_pop(self.0, start_byte);
 
             let cs = match cs.read_status {
-                -12 => return Err(-12),
+                i @ ..=-1 => return Err(i),
                 0 => cs,
                 1 => return Ok(Some(ReadResult::Continue)),
                 2 => return Ok(None),
@@ -91,6 +84,9 @@ impl Page {
 // current read page?
 // current write page?
 // }
+//
+// on push:
+//  -
 
 #[test]
 fn sequential_test() {
@@ -104,7 +100,7 @@ fn sequential_test() {
 
     for i in 0..NUM {
         let i = i.to_string();
-        let _ = x.push(&i).unwrap();
+        let _ = x.try_push(&i).unwrap();
         eprintln!("{:?}", i);
     }
 
