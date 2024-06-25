@@ -101,7 +101,6 @@ fn sequential_test() {
     for i in 0..NUM {
         let i = i.to_string();
         let _ = x.try_push(&i).unwrap();
-        eprintln!("{:?}", i);
     }
 
     for i in 0..NUM {
@@ -112,7 +111,7 @@ fn sequential_test() {
         };
 
         read_idx += p.len() + 1;
-        assert!(i.to_string() == p);
+        assert_eq!(i.to_string(), p);
     }
 
     eprintln!("took {} ms", now.elapsed().as_millis());
