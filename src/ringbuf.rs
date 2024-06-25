@@ -1,8 +1,7 @@
 use crate::page::{Page, ReadResult};
-use std::{path::PathBuf, process::exit};
-// use std::borrow::Cow;
+use std::path::PathBuf;
 
-struct Ringbuf {
+pub struct Ringbuf {
     name: PathBuf,
     write_page_count: usize,
     write_page: Page,
@@ -27,7 +26,7 @@ impl Ringbuf {
         }
     }
 
-    fn push<T: AsRef<[u8]>>(&mut self, input: T) {
+    pub fn push<T: AsRef<[u8]>>(&mut self, input: T) {
         loop {
             let _ = match self.write_page.try_push(&input) {
                 Ok(0) => 0,
@@ -45,7 +44,7 @@ impl Ringbuf {
         }
     }
 
-    fn pop(&mut self) -> Option<String> {
+    pub fn pop(&mut self) -> Option<String> {
         const SOME_NUMBER: usize = 2;
 
         loop {
@@ -79,10 +78,11 @@ impl Ringbuf {
     }
 }
 
+// gotta make ringbuf a c struct cri
+
 #[test]
-fn ringbuf_new_test() {
+fn ringbuf_sequential_test() {
     let mut r = Ringbuf::new("test");
-    let mut r2 = Ringbuf::new("test");
 
     for i in 0..50_000_000 {
         r.push(i.to_string());
