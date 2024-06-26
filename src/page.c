@@ -12,7 +12,7 @@
 // the drawback is that the length itself can be up to 8 bytes on 64bit systems
 // which might be longer than the message itself in some cases.
 //
-// #define CONSTANT_TIME_READ 1
+// #define CONSTANT_TIME_READ 1 - fix this
 
 #define QUEUE_SIZE 4096 * 32000
 #define PAGE_FULL -10
@@ -103,6 +103,7 @@ int raw_qpage_push_fast_read(RawQPage *p, char *buf, size_t len) {
   start &= QUEUE_MAGIC_MASK;
 
   if (start + len >= QUEUE_SIZE) {
+    // TODO: add PAGEFULL logic eventually
     atomic_fetch_sub_explicit(&p->write_idx_lock, QUEUE_MAGIC_NUM,
                               memory_order_relaxed);
     return PAGE_FULL;
@@ -131,7 +132,9 @@ int raw_qpage_push(RawQPage *p, char *buf, size_t len) {
   start &= QUEUE_MAGIC_MASK;
 
   if (start + len >= QUEUE_SIZE - 1) {
-    p->buf[start] = 0xFD;
+    if (start < QUEUE_SIZE - 1) {
+      p->buf[start] = 0xFD;
+    }
 
     atomic_fetch_sub_explicit(&p->write_idx_lock, QUEUE_MAGIC_NUM,
                               memory_order_relaxed);
@@ -166,6 +169,7 @@ CSlice raw_qpage_pop_fast_read(RawQPage *p, size_t start_byte) {
       sleep(0);
     }
 
+    // TODO: maybe this should be atomic fetch min - C26 type stuff
     atomic_store_explicit(&p->last_safe_write_idx, end, memory_order_relaxed);
   }
 
@@ -191,6 +195,7 @@ size_t _get_write_idx_spin(RawQPage *p, size_t start_byte) {
     while (1) {
       end = atomic_load_explicit(&p->write_idx_lock, memory_order_acquire);
 
+      // check if there are any writers
       if ((end & !QUEUE_MAGIC_MASK) == 0) {
         break;
       }
@@ -198,6 +203,7 @@ size_t _get_write_idx_spin(RawQPage *p, size_t start_byte) {
       sleep(0);
     }
 
+    // TODO: maybe this should be atomic fetch min - C26 type stuff
     atomic_store_explicit(&p->last_safe_write_idx, end, memory_order_relaxed);
   }
 
