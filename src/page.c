@@ -132,7 +132,7 @@ int raw_qpage_push(RawQPage *p, char *buf, size_t len) {
   start &= QUEUE_MAGIC_MASK;
 
   if (start + len >= QUEUE_SIZE - 1) {
-    if (start < QUEUE_SIZE - 1) {
+    if (start <= QUEUE_SIZE - 1) {
       p->buf[start] = 0xFD;
     }
 
