@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::{borrow::Cow, slice, str, sync::atomic::AtomicUsize};
 
 const QUEUE_SIZE: usize = (4096 * 20_000) - (usize::BITS / 8) as usize;
@@ -29,13 +30,22 @@ extern "C" {
     fn raw_qpage_pop(p: *const CPage, start_byte: usize) -> CSlice;
 }
 
-pub struct Page(*mut CPage);
+pub struct Page {
+    raw: *mut CPage,
+    path: PathBuf,
+}
 
 unsafe impl Send for Page {}
 
 impl Drop for Page {
     fn drop(&mut self) {
-        unsafe { raw_qpage_drop(self.0) };
+        unsafe { raw_qpage_drop(self.raw) };
+    }
+}
+
+impl Clone for Page {
+    fn clone(&self) -> Page {
+        Page::new(&self.path.to_str().expect("not unicode path"))
     }
 }
 
@@ -44,14 +54,17 @@ impl Page {
         let path = path.as_ref();
         let c_page = unsafe { raw_qpage_new_rs(path.as_ptr(), path.len()) };
 
-        Page(c_page)
+        Page {
+            raw: c_page,
+            path: path.into(),
+        }
     }
 
     pub fn try_push<T: AsRef<[u8]>>(&self, input: T) -> Result<usize, i32> {
         let input = input.as_ref();
 
         unsafe {
-            match raw_qpage_push(self.0, input.as_ptr(), input.len()) {
+            match raw_qpage_push(self.raw, input.as_ptr(), input.len()) {
                 i @ ..=-1 => Err(i),
                 // a return value of 0 implies the page is full
                 i @ 0.. => Ok(i as usize),
@@ -62,7 +75,7 @@ impl Page {
     // TODO: think of a better way to return result with READ_EMPTY in mind
     pub fn try_pop(&self, start_byte: usize) -> Result<Option<ReadResult>, i32> {
         let slice = unsafe {
-            let cs = raw_qpage_pop(self.0, start_byte);
+            let cs = raw_qpage_pop(self.raw, start_byte);
 
             let cs = match cs.read_status {
                 i @ ..=-1 => return Err(i),
@@ -78,15 +91,6 @@ impl Page {
         Ok(Some(ReadResult::Msg(String::from_utf8_lossy(slice))))
     }
 }
-
-// struct RingBuf {
-// current page?
-// current read page?
-// current write page?
-// }
-//
-// on push:
-//  -
 
 #[test]
 fn sequential_test() {
@@ -118,7 +122,3 @@ fn sequential_test() {
 
     std::fs::remove_file(FILE).unwrap();
 }
-
-// TODO:
-// make simple polling ringbuf
-// (figure out steps needed for that lol^)
