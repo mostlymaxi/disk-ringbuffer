@@ -4,7 +4,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
-#include <threads.h>
 #include <unistd.h>
 
 // this adds the length of the message to the front of the message
@@ -164,8 +163,6 @@ CSlice raw_qpage_pop_fast_read(RawQPage *p, size_t start_byte) {
       if ((end & !QUEUE_MAGIC_MASK) == 0) {
         break;
       }
-
-      sleep(0);
     }
 
     // TODO: maybe this should be atomic fetch min - C26 type stuff
@@ -216,7 +213,7 @@ CSlice raw_qpage_pop(RawQPage *p, size_t start_byte) {
   return raw_qpage_pop_fast_read(p, start_byte);
 #else
   size_t i, end;
-  CSlice cs; 
+  CSlice cs;
 
   end = _get_write_idx_spin(p, start_byte);
 

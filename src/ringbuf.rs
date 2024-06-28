@@ -1,5 +1,5 @@
 use crate::page::{Page, ReadResult};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 
 #[derive(Clone)]
@@ -24,18 +24,58 @@ pub struct Writer {
 const TEMP_MAX_TOTAL_PAGES: usize = 4;
 const PAGE_EXT: &str = "page.bin";
 
-// TODO: fn find_pages() {}
+fn find_pages<P: AsRef<Path>>(path: P) -> usize {
+    let mut write_page_count = 0;
+
+    for entry in std::fs::read_dir(path).unwrap() {
+        let entry = entry.unwrap();
+        let path = entry.path();
+
+        let Some(file_name) = path.file_name() else {
+            continue;
+        };
+
+        let file_name = file_name.to_string_lossy();
+        let mut file_name_iter = file_name.split(".");
+
+        let Some(num) = file_name_iter.next() else {
+            continue;
+        };
+        let Ok(num) = num.parse() else { continue };
+
+        if file_name_iter.next() != Some("page") {
+            continue;
+        }
+        if file_name_iter.next() != Some("bin") {
+            continue;
+        }
+
+        write_page_count = std::cmp::max(write_page_count, num);
+    }
+
+    write_page_count
+}
+
+// #[derive(Debug)]
+// struct RingbufExists;
+
+// fn lock<P: AsRef<Path>>(path: P) -> Result<(), RingbufExists> {
+//     let path: &Path = path.as_ref();
+//     std::fs::File::create_new(path.join("lock")).map_err(|_| RingbufExists)?;
+//     Ok(())
+// }
 
 pub fn new<P: Into<PathBuf>>(path: P) -> (Writer, Reader) {
     let path = path.into();
     let _ = std::fs::create_dir_all(&path);
 
-    // this should initialize to the number of files
-    let temp_latest_file_no = 0;
-    let wp_count = Arc::new(RwLock::new(temp_latest_file_no));
+    // lock(&path).expect("cannot open two ringbuffers in same directory");
+
+    let latest_file_no = find_pages(&path);
+    let wp_count = Arc::new(RwLock::new(latest_file_no));
     let page = Page::new(
         &path
-            .join(temp_latest_file_no.to_string())
+            .join(latest_file_no.to_string())
             .with_extension(PAGE_EXT)
             .to_str()
             .expect("this should always be unicode"),
