@@ -85,7 +85,6 @@ impl Page {
                 _ => unreachable!(),
             };
 
-            eprintln!("len {}", cs.len);
             slice::from_raw_parts(cs.ptr, cs.len)
         };
 

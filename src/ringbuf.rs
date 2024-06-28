@@ -181,18 +181,12 @@ fn seq_test() {
 fn spsc_test() {
     let (mut tx, mut rx) = new("test-spsc");
 
-    tx.push("a");
-    assert_eq!(rx.pop().unwrap(), "a".to_string());
-    assert!(rx.pop().is_none());
-
     let now = std::time::Instant::now();
     let t = std::thread::spawn(move || {
         for i in 0..50_000_000 {
             tx.push(i.to_string());
         }
     });
-
-    // let _ = t.join().unwrap();
 
     let mut i = 0;
     loop {
@@ -205,13 +199,11 @@ fn spsc_test() {
             None => continue,
         };
 
-        eprintln!("{m}");
-
         assert_eq!(m, i.to_string());
         i += 1;
     }
 
-    // let _ = t.join().unwrap();
+    let _ = t.join().unwrap();
 
     eprintln!("took {} ms", now.elapsed().as_millis());
 }

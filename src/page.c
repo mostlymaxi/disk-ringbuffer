@@ -51,14 +51,10 @@ typedef struct {
   atomic_size_t is_ready;
   atomic_size_t write_idx_lock;
   atomic_size_t last_safe_write_idx;
-  atomic_size_t last_idx;
   unsigned char buf[QUEUE_SIZE];
 } RawQPage;
 
 RawQPage *raw_qpage_new(char *path) {
-  // fprintf(stderr, "%lu\n", QUEUE_MAGIC_NUM);
-  // fprintf(stderr, "%lu\n", QUEUE_MAGIC_MASK);
-
   RawQPage *p;
   int fd;
 
@@ -199,7 +195,7 @@ size_t _get_write_idx_spin(RawQPage *p, size_t start_byte) {
       end = atomic_load_explicit(&p->write_idx_lock, memory_order_acquire);
 
       // check if there are any writers
-      if ((end & !QUEUE_MAGIC_MASK) == 0) {
+      if ((end & ~QUEUE_MAGIC_MASK) == 0) {
         break;
       }
 
@@ -220,8 +216,7 @@ CSlice raw_qpage_pop(RawQPage *p, size_t start_byte) {
   return raw_qpage_pop_fast_read(p, start_byte);
 #else
   size_t i, end;
-  CSlice cs; // DONT RETURN A STACK POINTER YOU SILLY GOOOSE UGH THIS IS
-             // UNDEFINED BEHAVIOR FUUUUUUUUUUUCKKKK
+  CSlice cs; 
 
   end = _get_write_idx_spin(p, start_byte);
 
@@ -242,9 +237,7 @@ CSlice raw_qpage_pop(RawQPage *p, size_t start_byte) {
   }
 
   for (i = start_byte; i < end; i++) {
-    // fprintf(stderr, "%x", p->buf[i]);
     if (p->buf[i] == VALUE_TERM_BYTE) {
-      // fprintf(stderr, "\n");
       break;
     }
   }
@@ -253,13 +246,13 @@ CSlice raw_qpage_pop(RawQPage *p, size_t start_byte) {
     cs.len = 0;
     cs.ptr = 0;
     cs.read_status = READ_ERROR;
+
+    return cs;
   }
 
   cs.len = i - start_byte;
   cs.ptr = (char *)&p->buf[start_byte];
   cs.read_status = READ_SUCCESS;
-
-  // fprintf(stderr, "%lu\n", cs.len);
 
   return cs;
 #endif
