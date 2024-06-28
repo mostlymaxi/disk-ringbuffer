@@ -10,7 +10,7 @@ repository = "https://github.com/MostlyMax/disk-ringbuffer"
 readme = "README.md"
 keywords = ["ringbuffer", "queue"]
 license = "MIT"
-categories = ["ringbuffer"]
+categories = ["database-implementations", "data-structures"]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
