@@ -132,7 +132,7 @@ impl Reader {
                 Ok(Some(ReadResult::Continue)) => {}
                 Ok(Some(ReadResult::Msg(m))) => {
                     self.read_start_byte += m.len() + 1;
-                    return Some(m.into());
+                    return Some(m.to_string());
                 }
                 Err(e) => panic!("{e}"),
             };
@@ -161,9 +161,8 @@ impl Reader {
 }
 
 #[test]
-fn ringbuf_sequential_test() {
-    let (mut tx, mut rx) = new("test");
-    let mut tx2 = tx.clone();
+fn seq_test() {
+    let (mut tx, mut rx) = new("test-seq");
 
     let now = std::time::Instant::now();
     for i in 0..50_000_000 {
@@ -175,7 +174,45 @@ fn ringbuf_sequential_test() {
         assert_eq!(m, i.to_string());
     }
 
-    tx2.push("asdf");
+    eprintln!("took {} ms", now.elapsed().as_millis());
+}
+
+#[test]
+fn spsc_test() {
+    let (mut tx, mut rx) = new("test-spsc");
+
+    tx.push("a");
+    assert_eq!(rx.pop().unwrap(), "a".to_string());
+    assert!(rx.pop().is_none());
+
+    let now = std::time::Instant::now();
+    let t = std::thread::spawn(move || {
+        for i in 0..50_000_000 {
+            tx.push(i.to_string());
+        }
+    });
+
+    // let _ = t.join().unwrap();
+
+    let mut i = 0;
+    loop {
+        if i == 50_000_000 {
+            break;
+        }
+
+        let m = match rx.pop() {
+            Some(m) => m,
+            None => continue,
+        };
+
+        eprintln!("{m}");
+
+        assert_eq!(m, i.to_string());
+        i += 1;
+    }
+
+    // let _ = t.join().unwrap();
+
     eprintln!("took {} ms", now.elapsed().as_millis());
 }
 // deleting pages on pop makes life much easier as opposed to deleting

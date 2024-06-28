@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::{borrow::Cow, slice, str, sync::atomic::AtomicUsize};
 
-const QUEUE_SIZE: usize = (4096 * 20_000) - (usize::BITS / 8) as usize;
+const QUEUE_SIZE: usize = 4096 * 32_000; // (4096 * 20_000) - (usize::BITS / 8) as usize;
 
 pub enum ReadResult<'a> {
     Msg(Cow<'a, str>),
@@ -85,6 +85,7 @@ impl Page {
                 _ => unreachable!(),
             };
 
+            eprintln!("len {}", cs.len);
             slice::from_raw_parts(cs.ptr, cs.len)
         };
 

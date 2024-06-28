@@ -56,6 +56,9 @@ typedef struct {
 } RawQPage;
 
 RawQPage *raw_qpage_new(char *path) {
+  // fprintf(stderr, "%lu\n", QUEUE_MAGIC_NUM);
+  // fprintf(stderr, "%lu\n", QUEUE_MAGIC_MASK);
+
   RawQPage *p;
   int fd;
 
@@ -105,7 +108,7 @@ int raw_qpage_push_fast_read(RawQPage *p, char *buf, size_t len) {
   if (start + len >= QUEUE_SIZE) {
     // TODO: add PAGEFULL logic eventually
     atomic_fetch_sub_explicit(&p->write_idx_lock, QUEUE_MAGIC_NUM,
-                              memory_order_relaxed);
+                              memory_order_release);
     return PAGE_FULL;
   }
 
@@ -137,7 +140,7 @@ int raw_qpage_push(RawQPage *p, char *buf, size_t len) {
     }
 
     atomic_fetch_sub_explicit(&p->write_idx_lock, QUEUE_MAGIC_NUM,
-                              memory_order_relaxed);
+                              memory_order_release);
     return WRITE_PAGE_FULL;
   }
 
@@ -217,11 +220,12 @@ CSlice raw_qpage_pop(RawQPage *p, size_t start_byte) {
   return raw_qpage_pop_fast_read(p, start_byte);
 #else
   size_t i, end;
-  CSlice cs;
+  CSlice cs; // DONT RETURN A STACK POINTER YOU SILLY GOOOSE UGH THIS IS
+             // UNDEFINED BEHAVIOR FUUUUUUUUUUUCKKKK
 
   end = _get_write_idx_spin(p, start_byte);
 
-  if (end == start_byte) {
+  if (end <= start_byte) {
     cs.len = 0;
     cs.ptr = 0;
     cs.read_status = READ_EMPTY;
@@ -238,7 +242,9 @@ CSlice raw_qpage_pop(RawQPage *p, size_t start_byte) {
   }
 
   for (i = start_byte; i < end; i++) {
+    // fprintf(stderr, "%x", p->buf[i]);
     if (p->buf[i] == VALUE_TERM_BYTE) {
+      // fprintf(stderr, "\n");
       break;
     }
   }
@@ -252,6 +258,8 @@ CSlice raw_qpage_pop(RawQPage *p, size_t start_byte) {
   cs.len = i - start_byte;
   cs.ptr = (char *)&p->buf[start_byte];
   cs.read_status = READ_SUCCESS;
+
+  // fprintf(stderr, "%lu\n", cs.len);
 
   return cs;
 #endif
