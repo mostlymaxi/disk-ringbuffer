@@ -2,44 +2,77 @@ use crate::page::{Page, ReadResult};
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 
-pub struct Ringbuf {
-    name: PathBuf,
-    // write page count should be atomic and set to max of increment when incrementing?
+#[derive(Clone)]
+pub struct Reader {
+    path: PathBuf,
     write_page_count: Arc<RwLock<usize>>,
-    write_page_no: usize,
-    write_page: Page,
-    read_page_count: usize,
+    read_page_no: usize,
     read_page: Page,
     read_start_byte: usize,
     max_total_pages: usize,
 }
 
-impl Ringbuf {
-    pub fn new<P: Into<PathBuf>>(path: P) -> Ringbuf {
-        const MAX_TOTAL_PAGES: usize = 3;
-        let name = path.into();
-        let _ = std::fs::create_dir_all(&name);
+#[derive(Clone)]
+pub struct Writer {
+    path: PathBuf,
+    write_page_count: Arc<RwLock<usize>>,
+    write_page_no: usize,
+    write_page: Page,
+    max_total_pages: usize,
+}
 
-        Ringbuf {
-            name: name.clone(),
-            write_page_count: Arc::new(RwLock::new(0)),
+const TEMP_MAX_TOTAL_PAGES: usize = 4;
+const PAGE_EXT: &str = "page.bin";
+
+// TODO: fn find_pages() {}
+
+pub fn new<P: Into<PathBuf>>(path: P) -> (Writer, Reader) {
+    let path = path.into();
+    let _ = std::fs::create_dir_all(&path);
+
+    // this should initialize to the number of files
+    let temp_latest_file_no = 0;
+    let wp_count = Arc::new(RwLock::new(temp_latest_file_no));
+    let page = Page::new(
+        &path
+            .join(temp_latest_file_no.to_string())
+            .with_extension(PAGE_EXT)
+            .to_str()
+            .expect("this should always be unicode"),
+    );
+
+    (
+        Writer {
+            path: path.clone(),
+            write_page_count: wp_count.clone(),
             write_page_no: 0,
-            read_page_count: 0,
+            write_page: page.clone(),
+            max_total_pages: TEMP_MAX_TOTAL_PAGES,
+        },
+        Reader {
+            path,
+            write_page_count: wp_count,
+            read_page_no: 0,
+            read_page: page,
             read_start_byte: 0,
-            max_total_pages: MAX_TOTAL_PAGES,
-            // should open lowest number page in the directory rather than 0
-            write_page: Page::new(&name.join("0.test.bin").to_string_lossy()),
-            read_page: Page::new(&name.join("0.test.bin").to_string_lossy()),
-        }
-    }
+            max_total_pages: TEMP_MAX_TOTAL_PAGES,
+        },
+    )
+}
 
+impl Writer {
     fn page_flip(&mut self) {
         let page_count = self
             .write_page_count
             .read()
             .expect("something went really bad with your lock");
 
-        if *page_count == self.write_page_no {
+        if self.write_page_no < *page_count {
+            self.write_page_no += 1;
+            return;
+        }
+
+        if self.write_page_no == *page_count {
             drop(page_count);
 
             let mut page_count = self
@@ -47,7 +80,7 @@ impl Ringbuf {
                 .write()
                 .expect("something went really bad with your lock");
 
-            if *page_count < self.write_page_no {
+            if self.write_page_no < *page_count {
                 self.write_page_no += 1;
                 return;
             }
@@ -58,8 +91,11 @@ impl Ringbuf {
             if *page_count >= self.max_total_pages {
                 std::fs::remove_file(
                     &self
-                        .name
-                        .join(format!("{}.test.bin", *page_count - self.max_total_pages)),
+                        .path
+                        .join((*page_count - self.max_total_pages).to_string())
+                        .with_extension(PAGE_EXT)
+                        .to_str()
+                        .expect("this should always be unicode"),
                 )
                 .expect("something went wrong deleting an old file");
             }
@@ -78,13 +114,17 @@ impl Ringbuf {
 
             self.write_page = Page::new(
                 &self
-                    .name
-                    .join(format!("{}.test.bin", self.write_page_no))
-                    .to_string_lossy(),
+                    .path
+                    .join(self.write_page_no.to_string())
+                    .with_extension(PAGE_EXT)
+                    .to_str()
+                    .expect("this should always be unicode"),
             );
         }
     }
+}
 
+impl Reader {
     pub fn pop(&mut self) -> Option<String> {
         loop {
             match self.read_page.try_pop(self.read_start_byte) {
@@ -102,17 +142,19 @@ impl Ringbuf {
                 .read()
                 .expect("something went really wrong with your lock");
 
-            self.read_page_count = std::cmp::max(
-                self.read_page_count + 1,
+            self.read_page_no = std::cmp::max(
+                self.read_page_no + 1,
                 page_count.saturating_sub(self.max_total_pages),
             );
 
             self.read_start_byte = 0;
             self.read_page = Page::new(
                 &self
-                    .name
-                    .join(format!("{}.test.bin", self.read_page_count))
-                    .to_string_lossy(),
+                    .path
+                    .join(self.read_page_no.to_string())
+                    .with_extension(PAGE_EXT)
+                    .to_str()
+                    .expect("this should always be unicode"),
             );
         }
     }
@@ -120,18 +162,20 @@ impl Ringbuf {
 
 #[test]
 fn ringbuf_sequential_test() {
-    let mut r = Ringbuf::new("test");
+    let (mut tx, mut rx) = new("test");
+    let mut tx2 = tx.clone();
 
     let now = std::time::Instant::now();
     for i in 0..50_000_000 {
-        r.push(i.to_string());
+        tx.push(i.to_string());
     }
 
     for i in 0..50_000_000 {
-        let m = r.pop().unwrap();
+        let m = rx.pop().unwrap();
         assert_eq!(m, i.to_string());
     }
 
+    tx2.push("asdf");
     eprintln!("took {} ms", now.elapsed().as_millis());
 }
 // deleting pages on pop makes life much easier as opposed to deleting
