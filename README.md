@@ -7,7 +7,7 @@ efficiency (less but bigger memory-mapped pages).
 
 
 ## Example
-'''rust
+```rust
 fn seq_test() {
     // takes directory to use as ringbuf storage as input
     let (mut tx, mut rx) = new("test-seq");
@@ -25,7 +25,7 @@ fn seq_test() {
     }
 
 }
-'''
+```
 
 
 
