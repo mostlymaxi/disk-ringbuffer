@@ -10,7 +10,7 @@ efficiency (less but bigger memory-mapped pages).
 ```rust
 fn seq_test() {
     // takes directory to use as ringbuf storage as input
-    let (mut tx, mut rx) = new("test-seq");
+    let (mut tx, mut rx) = new("test-seq").unwrap();
 
     // you can clone readers and writers to use in other threads!
     let tx2 = tx.clone();
@@ -20,10 +20,9 @@ fn seq_test() {
     }
 
     for i in 0..50_000_000 {
-        let m = rx.pop().unwrap();
+        let m = rx.pop().unwrap().unwrap();
         assert_eq!(m, i.to_string());
     }
-
 }
 ```
 
