@@ -14,8 +14,7 @@
 // #define CONSTANT_TIME_READ 1 - fix this
 
 #define QUEUE_SIZE 4096 * 32000
-#define PAGE_FULL -10
-#define PAGE_EXISTS -11
+#define READ_ERROR -1
 #define VALUE_TERM_BYTE 0xFF
 
 // i use a single atomic size_t to keep track of both:
@@ -34,8 +33,6 @@
 const size_t QUEUE_MAGIC_NUM = (size_t)0b1 << ((sizeof(size_t) * 8) - 8);
 
 const size_t QUEUE_MAGIC_MASK = QUEUE_MAGIC_NUM - 1;
-
-#define READ_ERROR -12
 #define READ_SUCCESS 0
 #define READ_FINISHED 1
 #define READ_EMPTY 2
@@ -104,7 +101,7 @@ int raw_qpage_push_fast_read(RawQPage *p, char *buf, size_t len) {
     // TODO: add PAGEFULL logic eventually
     atomic_fetch_sub_explicit(&p->write_idx_lock, QUEUE_MAGIC_NUM,
                               memory_order_release);
-    return PAGE_FULL;
+    return WRITE_PAGE_FULL;
   }
 
   memcpy(&p->buf[start], &len, sizeof(size_t));

@@ -1,6 +1,8 @@
 use crate::page::{Page, ReadResult};
+use std::fs::DirEntry;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
+use thiserror::Error;
 
 #[derive(Clone)]
 pub struct Reader {
@@ -21,39 +23,53 @@ pub struct Writer {
     max_total_pages: usize,
 }
 
+#[derive(Error, Debug)]
+pub enum RingbufError {
+    #[error("invalid read")]
+    ReadError,
+    #[error(transparent)]
+    IoError(#[from] std::io::Error),
+}
+
+impl From<i32> for RingbufError {
+    fn from(error: i32) -> RingbufError {
+        match error {
+            -1 => RingbufError::ReadError,
+            _ => unreachable!(),
+        }
+    }
+}
+
 const TEMP_MAX_TOTAL_PAGES: usize = 4;
 const PAGE_EXT: &str = "page.bin";
 
-fn find_pages<P: AsRef<Path>>(path: P) -> usize {
+fn check_valid_page(entry: DirEntry) -> Option<usize> {
+    let path = entry.path();
+    let file_name = path.file_name()?;
+    let file_name = file_name.to_str()?;
+
+    if !file_name.ends_with(PAGE_EXT) {
+        return None;
+    }
+
+    let num = path.file_stem()?.to_str()?.parse().ok()?;
+
+    Some(num)
+}
+
+fn find_pages<P: AsRef<Path>>(path: P) -> Result<usize, RingbufError> {
     let mut write_page_count = 0;
 
-    for entry in std::fs::read_dir(path).unwrap() {
-        let entry = entry.unwrap();
-        let path = entry.path();
-
-        let Some(file_name) = path.file_name() else {
+    for entry in std::fs::read_dir(path)? {
+        let entry = entry?;
+        let Some(num) = check_valid_page(entry) else {
             continue;
         };
-
-        let file_name = file_name.to_string_lossy();
-        let mut file_name_iter = file_name.split(".");
-
-        let Some(num) = file_name_iter.next() else {
-            continue;
-        };
-        let Ok(num) = num.parse() else { continue };
-
-        if file_name_iter.next() != Some("page") {
-            continue;
-        }
-        if file_name_iter.next() != Some("bin") {
-            continue;
-        }
 
         write_page_count = std::cmp::max(write_page_count, num);
     }
 
-    write_page_count
+    Ok(write_page_count)
 }
 
 // #[derive(Debug)]
@@ -65,23 +81,26 @@ fn find_pages<P: AsRef<Path>>(path: P) -> usize {
 //     Ok(())
 // }
 
-pub fn new<P: Into<PathBuf>>(path: P) -> (Writer, Reader) {
+pub fn new<P: Into<PathBuf>>(path: P) -> Result<(Writer, Reader), RingbufError> {
     let path = path.into();
-    let _ = std::fs::create_dir_all(&path);
+    std::fs::create_dir_all(&path)?;
 
-    // lock(&path).expect("cannot open two ringbuffers in same directory");
-
-    let latest_file_no = find_pages(&path);
+    let latest_file_no = find_pages(&path)?;
     let wp_count = Arc::new(RwLock::new(latest_file_no));
     let page = Page::new(
         &path
             .join(latest_file_no.to_string())
             .with_extension(PAGE_EXT)
             .to_str()
-            .expect("this should always be unicode"),
+            .ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    "can't convert extension to utf-8",
+                )
+            })?,
     );
 
-    (
+    Ok((
         Writer {
             path: path.clone(),
             write_page_count: wp_count.clone(),
@@ -97,32 +116,26 @@ pub fn new<P: Into<PathBuf>>(path: P) -> (Writer, Reader) {
             read_start_byte: 0,
             max_total_pages: TEMP_MAX_TOTAL_PAGES,
         },
-    )
+    ))
 }
 
 impl Writer {
-    fn page_flip(&mut self) {
-        let page_count = self
-            .write_page_count
-            .read()
-            .expect("something went really bad with your lock");
+    fn page_flip(&mut self) -> Result<(), std::io::Error> {
+        let page_count = self.write_page_count.read().expect("poisoned lock!");
 
         if self.write_page_no < *page_count {
             self.write_page_no += 1;
-            return;
+            return Ok(());
         }
 
         if self.write_page_no == *page_count {
             drop(page_count);
 
-            let mut page_count = self
-                .write_page_count
-                .write()
-                .expect("something went really bad with your lock");
+            let mut page_count = self.write_page_count.write().expect("poisoned lock!");
 
             if self.write_page_no < *page_count {
                 self.write_page_no += 1;
-                return;
+                return Ok(());
             }
 
             *page_count += 1;
@@ -135,22 +148,29 @@ impl Writer {
                         .join((*page_count - self.max_total_pages).to_string())
                         .with_extension(PAGE_EXT)
                         .to_str()
-                        .expect("this should always be unicode"),
-                )
-                .expect("something went wrong deleting an old file");
+                        .ok_or_else(|| {
+                            std::io::Error::new(
+                                std::io::ErrorKind::Other,
+                                "can't convert extension to utf-8",
+                            )
+                        })?,
+                )?
             }
         }
+
+        Ok(())
     }
 
-    pub fn push<T: AsRef<[u8]>>(&mut self, input: T) {
+    pub fn push<T: AsRef<[u8]>>(&mut self, input: T) -> Result<usize, RingbufError> {
         loop {
-            let _ = match self.write_page.try_push(&input) {
-                Ok(0) => 0, // PAGE FULL / Continue
-                Ok(_) => break,
-                Err(e) => panic!("{:#?}", e),
-            };
+            let i = self.write_page.try_push(&input)?;
 
-            self.page_flip();
+            if i > 0 {
+                return Ok(i);
+            }
+
+            // a result of 0 implies a full page
+            self.page_flip()?;
 
             self.write_page = Page::new(
                 &self
@@ -164,23 +184,27 @@ impl Writer {
     }
 }
 
+impl Iterator for Reader {
+    type Item = Result<Option<String>, RingbufError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        Some(self.pop())
+    }
+}
+
 impl Reader {
-    pub fn pop(&mut self) -> Option<String> {
+    pub fn pop(&mut self) -> Result<Option<String>, RingbufError> {
         loop {
-            match self.read_page.try_pop(self.read_start_byte) {
-                Ok(None) => return None, // no new messages
-                Ok(Some(ReadResult::Continue)) => {}
-                Ok(Some(ReadResult::Msg(m))) => {
+            match self.read_page.try_pop(self.read_start_byte)? {
+                None => return Ok(None), // no new messages
+                Some(ReadResult::Continue) => {}
+                Some(ReadResult::Msg(m)) => {
                     self.read_start_byte += m.len() + 1;
-                    return Some(m.to_string());
+                    return Ok(Some(m.to_string()));
                 }
-                Err(e) => panic!("{e}"),
             };
 
-            let page_count = self
-                .write_page_count
-                .read()
-                .expect("something went really wrong with your lock");
+            let page_count = self.write_page_count.read().expect("poisoned lock!");
 
             self.read_page_no = std::cmp::max(
                 self.read_page_no + 1,
@@ -194,7 +218,12 @@ impl Reader {
                     .join(self.read_page_no.to_string())
                     .with_extension(PAGE_EXT)
                     .to_str()
-                    .expect("this should always be unicode"),
+                    .ok_or_else(|| {
+                        std::io::Error::new(
+                            std::io::ErrorKind::Other,
+                            "can't convert extension to utf-8",
+                        )
+                    })?,
             );
         }
     }
@@ -202,15 +231,15 @@ impl Reader {
 
 #[test]
 fn seq_test() {
-    let (mut tx, mut rx) = new("test-seq");
+    let (mut tx, mut rx) = new("test-seq").unwrap();
 
     let now = std::time::Instant::now();
     for i in 0..50_000_000 {
-        tx.push(i.to_string());
+        tx.push(i.to_string()).unwrap();
     }
 
     for i in 0..50_000_000 {
-        let m = rx.pop().unwrap();
+        let m = rx.pop().unwrap().unwrap();
         assert_eq!(m, i.to_string());
     }
 
@@ -219,12 +248,12 @@ fn seq_test() {
 
 #[test]
 fn spsc_test() {
-    let (mut tx, mut rx) = new("test-spsc");
+    let (mut tx, mut rx) = new("test-spsc").unwrap();
 
     let now = std::time::Instant::now();
     let t = std::thread::spawn(move || {
         for i in 0..50_000_000 {
-            tx.push(i.to_string());
+            tx.push(i.to_string()).unwrap();
         }
     });
 
@@ -234,7 +263,7 @@ fn spsc_test() {
             break;
         }
 
-        let m = match rx.pop() {
+        let m = match rx.pop().unwrap() {
             Some(m) => m,
             None => continue,
         };

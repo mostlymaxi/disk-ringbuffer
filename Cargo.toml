@@ -17,6 +17,7 @@ categories = ["database-implementations", "data-structures"]
 cty = "0.2.2"
 memmap2 = "0.9.4"
 static_assertions = "1.1.0"
+thiserror = "1.0.61"
 
 [build-dependencies]
 cc = "1.0"
