@@ -45,7 +45,7 @@ impl Drop for Page {
 
 impl Clone for Page {
     fn clone(&self) -> Page {
-        Page::new(&self.path.to_str().expect("not unicode path"))
+        Page::new(self.path.to_str().expect("not unicode path"))
     }
 }
 

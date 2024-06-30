@@ -88,8 +88,7 @@ pub fn new<P: Into<PathBuf>>(path: P) -> Result<(Writer, Reader), RingbufError> 
     let latest_file_no = find_pages(&path)?;
     let wp_count = Arc::new(RwLock::new(latest_file_no));
     let page = Page::new(
-        &path
-            .join(latest_file_no.to_string())
+        path.join(latest_file_no.to_string())
             .with_extension(PAGE_EXT)
             .to_str()
             .ok_or_else(|| {
@@ -143,8 +142,7 @@ impl Writer {
 
             if *page_count >= self.max_total_pages {
                 std::fs::remove_file(
-                    &self
-                        .path
+                    self.path
                         .join((*page_count - self.max_total_pages).to_string())
                         .with_extension(PAGE_EXT)
                         .to_str()
@@ -173,8 +171,7 @@ impl Writer {
             self.page_flip()?;
 
             self.write_page = Page::new(
-                &self
-                    .path
+                self.path
                     .join(self.write_page_no.to_string())
                     .with_extension(PAGE_EXT)
                     .to_str()
@@ -213,8 +210,7 @@ impl Reader {
 
             self.read_start_byte = 0;
             self.read_page = Page::new(
-                &self
-                    .path
+                self.path
                     .join(self.read_page_no.to_string())
                     .with_extension(PAGE_EXT)
                     .to_str()
