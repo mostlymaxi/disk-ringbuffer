@@ -4,6 +4,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 use thiserror::Error;
 
+/// A thread safe ringbuf receiver
+///
 #[derive(Clone)]
 pub struct Reader {
     path: PathBuf,
@@ -12,8 +14,21 @@ pub struct Reader {
     read_page: Page,
     read_start_byte: usize,
     max_total_pages: usize,
+    _lock: Arc<fslock::LockFile>,
 }
 
+/** A thread safe ringbuf sender
+```rust
+    let (mut tx, mut rx) = new("test-spsc").unwrap();
+
+    let now = std::time::Instant::now();
+    let t = std::thread::spawn(move || {
+        for i in 0..50_000_000 {
+            tx.push(i.to_string()).unwrap();
+        }
+    });
+```
+**/
 #[derive(Clone)]
 pub struct Writer {
     path: PathBuf,
@@ -21,6 +36,7 @@ pub struct Writer {
     write_page_no: usize,
     write_page: Page,
     max_total_pages: usize,
+    _lock: Arc<fslock::LockFile>,
 }
 
 #[derive(Error, Debug)]
@@ -29,6 +45,8 @@ pub enum RingbufError {
     ReadError,
     #[error(transparent)]
     IoError(#[from] std::io::Error),
+    #[error("conflicting ringbuf path")]
+    RingbufExists,
 }
 
 impl From<i32> for RingbufError {
@@ -72,18 +90,15 @@ fn find_pages<P: AsRef<Path>>(path: P) -> Result<usize, RingbufError> {
     Ok(write_page_count)
 }
 
-// #[derive(Debug)]
-// struct RingbufExists;
-
-// fn lock<P: AsRef<Path>>(path: P) -> Result<(), RingbufExists> {
-//     let path: &Path = path.as_ref();
-//     std::fs::File::create_new(path.join("lock")).map_err(|_| RingbufExists)?;
-//     Ok(())
-// }
-
 pub fn new<P: Into<PathBuf>>(path: P) -> Result<(Writer, Reader), RingbufError> {
     let path = path.into();
     std::fs::create_dir_all(&path)?;
+
+    let mut file = fslock::LockFile::open(&path.join("rb.lock"))?;
+    if !file.try_lock()? {
+        return Err(RingbufError::RingbufExists);
+    }
+    let _lock = Arc::new(file);
 
     let latest_file_no = find_pages(&path)?;
     let wp_count = Arc::new(RwLock::new(latest_file_no));
@@ -106,6 +121,7 @@ pub fn new<P: Into<PathBuf>>(path: P) -> Result<(Writer, Reader), RingbufError> 
             write_page_no: 0,
             write_page: page.clone(),
             max_total_pages: TEMP_MAX_TOTAL_PAGES,
+            _lock: _lock.clone(),
         },
         Reader {
             path,
@@ -114,6 +130,7 @@ pub fn new<P: Into<PathBuf>>(path: P) -> Result<(Writer, Reader), RingbufError> 
             read_page: page,
             read_start_byte: 0,
             max_total_pages: TEMP_MAX_TOTAL_PAGES,
+            _lock,
         },
     ))
 }
@@ -223,6 +240,16 @@ impl Reader {
             );
         }
     }
+}
+
+#[test]
+fn lock_test() {
+    let (_tx, _rx) = new("test-lock").unwrap();
+    assert!(new("test-lock").is_err());
+
+    drop(_tx);
+    drop(_rx);
+    let (_tx, _rx) = new("test-lock").unwrap();
 }
 
 #[test]
