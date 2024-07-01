@@ -1,6 +1,6 @@
 [package]
 name = "disk-ringbuffer"
-version = "0.3.1"
+version = "0.4.0"
 edition = "2021"
 authors = ["Maxi Saparov <max.saparov@gmail.com>"]
 description = "lock free on disk ringbuffer to be used in the implementation of Franz"
@@ -15,6 +15,7 @@ categories = ["database-implementations", "data-structures"]
 
 [dependencies]
 cty = "0.2.2"
+fslock = "0.2.1"
 memmap2 = "0.9.4"
 static_assertions = "1.1.0"
 thiserror = "1.0.61"

@@ -8,6 +8,7 @@ pub enum ReadResult<'a> {
     Continue,
 }
 
+/// a wrapper around my implementation of a Rust "Slice" in C
 #[repr(C)]
 struct CSlice {
     len: cty::size_t,
@@ -15,6 +16,7 @@ struct CSlice {
     read_status: cty::c_int,
 }
 
+/// a wrapper around C struct RawQPage
 #[repr(C)]
 struct CPage {
     is_ready: AtomicUsize,
@@ -30,6 +32,7 @@ extern "C" {
     fn raw_qpage_pop(p: *const CPage, start_byte: usize) -> CSlice;
 }
 
+/// a convenience wrapper around CPage to keep track of the directory it was made in (path)
 pub struct Page {
     raw: *mut CPage,
     path: PathBuf,
