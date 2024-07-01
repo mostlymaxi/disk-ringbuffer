@@ -22,3 +22,4 @@ thiserror = "1.0.61"
 
 [build-dependencies]
 cc = "1.0"
+bindgen = "0.69.4"

@@ -29,5 +29,6 @@ fn seq_test() {
 ```
 */
 
+mod bindings;
 pub mod page;
 pub mod ringbuf;

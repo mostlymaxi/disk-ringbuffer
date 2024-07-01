@@ -44,7 +44,7 @@ const size_t QUEUE_MAGIC_MASK = QUEUE_MAGIC_NUM - 1;
 
 typedef struct {
   size_t len;
-  char *ptr;
+  unsigned char *ptr;
   int read_status;
 } CSlice;
 
@@ -61,11 +61,11 @@ RawQPage *raw_qpage_new(char *path);
 // it's so much better not to... but unfortunately
 // this becomes a pain in the ass when passing strings
 // to c
-RawQPage *raw_qpage_new_rs(char *path, size_t path_len);
+RawQPage *raw_qpage_new_rs(const unsigned char *path, size_t path_len);
 
 int raw_qpage_push_fast_read(RawQPage *p, char *buf, size_t len);
 
-int raw_qpage_push(RawQPage *p, char *buf, size_t len);
+int raw_qpage_push(RawQPage *p, const unsigned char *buf, size_t len);
 
 CSlice raw_qpage_pop_fast_read(RawQPage *p, size_t start_byte);
 
