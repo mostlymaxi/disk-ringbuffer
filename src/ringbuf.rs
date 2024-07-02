@@ -37,8 +37,8 @@ pub enum RingbufError {
     RingbufExists,
 }
 
-impl From<i32> for RingbufError {
-    fn from(error: i32) -> RingbufError {
+impl From<i64> for RingbufError {
+    fn from(error: i64) -> RingbufError {
         match error {
             -1 => RingbufError::ReadError,
             _ => unreachable!(),
@@ -199,6 +199,48 @@ impl Iterator for Reader {
 }
 
 impl Reader {
+    #[cfg(feature = "fast-read")]
+    pub fn pop(&mut self) -> Result<Option<String>, RingbufError> {
+        const sizeof_usize: usize = std::mem::size_of::<usize>();
+
+        loop {
+            match self.read_page.try_pop(self.read_start_byte)? {
+                None => return Ok(None), // no new messages
+                Some(ReadResult::Continue) => {}
+                Some(ReadResult::Msg(m)) => {
+                    self.read_start_byte += m.len() + sizeof_usize + 1;
+                    return Ok(Some(m.to_string()));
+                }
+            };
+
+            if self.max_total_pages > 0 {
+                let page_count = self.write_page_count.read().expect("poisoned lock!");
+
+                self.read_page_no = std::cmp::max(
+                    self.read_page_no + 1,
+                    page_count.saturating_sub(self.max_total_pages),
+                );
+            } else {
+                self.read_page_no += 1;
+            }
+
+            self.read_start_byte = 0;
+            self.read_page = Page::new(
+                self.path
+                    .join(self.read_page_no.to_string())
+                    .with_extension(PAGE_EXT)
+                    .to_str()
+                    .ok_or_else(|| {
+                        std::io::Error::new(
+                            std::io::ErrorKind::Other,
+                            "can't convert extension to utf-8",
+                        )
+                    })?,
+            );
+        }
+    }
+
+    #[cfg(not(feature = "fast-read"))]
     pub fn pop(&mut self) -> Result<Option<String>, RingbufError> {
         loop {
             match self.read_page.try_pop(self.read_start_byte)? {
@@ -210,12 +252,16 @@ impl Reader {
                 }
             };
 
-            let page_count = self.write_page_count.read().expect("poisoned lock!");
+            if self.max_total_pages > 0 {
+                let page_count = self.write_page_count.read().expect("poisoned lock!");
 
-            self.read_page_no = std::cmp::max(
-                self.read_page_no + 1,
-                page_count.saturating_sub(self.max_total_pages),
-            );
+                self.read_page_no = std::cmp::max(
+                    self.read_page_no + 1,
+                    page_count.saturating_sub(self.max_total_pages),
+                );
+            } else {
+                self.read_page_no += 1;
+            }
 
             self.read_start_byte = 0;
             self.read_page = Page::new(
@@ -249,7 +295,7 @@ fn lock_test() {
 #[test]
 fn seq_test() {
     let test_dir_path = "test-seq";
-    let (mut tx, mut rx) = new(test_dir_path, 8).unwrap();
+    let (mut tx, mut rx) = new(test_dir_path, 0).unwrap();
 
     let now = std::time::Instant::now();
     for i in 0..50_000_000 {
@@ -269,7 +315,7 @@ fn seq_test() {
 #[test]
 fn spsc_test() {
     let test_dir_path = "test-spsc";
-    let (mut tx, mut rx) = new(test_dir_path, 8).unwrap();
+    let (mut tx, mut rx) = new(test_dir_path, 0).unwrap();
 
     let now = std::time::Instant::now();
     let t = std::thread::spawn(move || {

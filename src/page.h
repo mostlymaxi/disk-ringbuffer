@@ -13,8 +13,6 @@
 // which allows the pop operation to not perform a linear search.
 // the drawback is that the length itself can be up to 8 bytes on 64bit systems
 // which might be longer than the message itself in some cases.
-//
-// #define CONSTANT_TIME_READ 1 - fix this
 
 #define QUEUE_SIZE 4096 * 16000
 #define READ_ERROR -1
@@ -45,7 +43,7 @@ const size_t QUEUE_MAGIC_MASK = QUEUE_MAGIC_NUM - 1;
 typedef struct {
   size_t len;
   unsigned char *ptr;
-  int read_status;
+  long read_status;
 } CSlice;
 
 typedef struct {
@@ -63,9 +61,10 @@ RawQPage *raw_qpage_new(char *path);
 // to c
 RawQPage *raw_qpage_new_rs(const unsigned char *path, size_t path_len);
 
-int raw_qpage_push_fast_read(RawQPage *p, char *buf, size_t len);
+long raw_qpage_push_fast_read(RawQPage *p, const unsigned char *buf,
+                              size_t len);
 
-int raw_qpage_push(RawQPage *p, const unsigned char *buf, size_t len);
+long raw_qpage_push(RawQPage *p, const unsigned char *buf, size_t len);
 
 CSlice raw_qpage_pop_fast_read(RawQPage *p, size_t start_byte);
 

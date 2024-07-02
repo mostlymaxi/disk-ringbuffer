@@ -38,7 +38,8 @@ RawQPage *raw_qpage_new_rs(const unsigned char *path, size_t path_len) {
   return raw_qpage_new(path_with_null_term);
 }
 
-int raw_qpage_push_fast_read(RawQPage *p, char *buf, size_t len) {
+long raw_qpage_push_fast_read(RawQPage *p, const unsigned char *buf,
+                              size_t len) {
   size_t start;
 
   start = atomic_fetch_add_explicit(&p->write_idx_lock,
@@ -47,8 +48,11 @@ int raw_qpage_push_fast_read(RawQPage *p, char *buf, size_t len) {
 
   start &= QUEUE_MAGIC_MASK;
 
-  if (start + len >= QUEUE_SIZE) {
-    // TODO: add PAGEFULL logic eventually
+  if (start + sizeof(size_t) + len >= QUEUE_SIZE - 1) {
+    if (start <= QUEUE_SIZE - 1) {
+      p->buf[start] = 0xFD;
+    }
+
     atomic_fetch_sub_explicit(&p->write_idx_lock, QUEUE_MAGIC_NUM,
                               memory_order_release);
     return WRITE_PAGE_FULL;
@@ -64,11 +68,7 @@ int raw_qpage_push_fast_read(RawQPage *p, char *buf, size_t len) {
   return len + sizeof(size_t) + 1;
 }
 
-int raw_qpage_push(RawQPage *p, const unsigned char *buf, size_t len) {
-#ifdef CONSTANT_TIME_READ
-  return raw_qpage_push_fast_read(p, buf, len);
-#else
-
+long raw_qpage_push(RawQPage *p, const unsigned char *buf, size_t len) {
   size_t start;
 
   start = atomic_fetch_add_explicit(
@@ -93,39 +93,6 @@ int raw_qpage_push(RawQPage *p, const unsigned char *buf, size_t len) {
                             memory_order_release);
 
   return len + 1;
-
-#endif
-}
-
-CSlice raw_qpage_pop_fast_read(RawQPage *p, size_t start_byte) {
-  size_t end;
-  CSlice cs;
-
-  end = atomic_load_explicit(&p->last_safe_write_idx, memory_order_relaxed);
-
-  if (end <= start_byte) {
-    while (1) {
-      end = atomic_load_explicit(&p->write_idx_lock, memory_order_acquire);
-
-      if ((end & !QUEUE_MAGIC_MASK) == 0) {
-        break;
-      }
-    }
-
-    // TODO: maybe this should be atomic fetch min - C26 type stuff
-    atomic_store_explicit(&p->last_safe_write_idx, end, memory_order_relaxed);
-  }
-
-  end = (QUEUE_SIZE < end) ? QUEUE_SIZE : end;
-
-  cs.len = *(size_t *)&p->buf[start_byte];
-  cs.ptr = &p->buf[start_byte + sizeof(size_t)];
-
-  if (p->buf[start_byte + cs.len + sizeof(size_t)] != VALUE_TERM_BYTE) {
-    cs.len = 0;
-  }
-
-  return cs;
 }
 
 size_t _get_write_idx_spin(RawQPage *p, size_t start_byte) {
@@ -155,10 +122,44 @@ size_t _get_write_idx_spin(RawQPage *p, size_t start_byte) {
   return end;
 }
 
+CSlice raw_qpage_pop_fast_read(RawQPage *p, size_t start_byte) {
+  size_t end;
+  CSlice cs;
+
+  end = _get_write_idx_spin(p, start_byte);
+
+  if (end <= start_byte) {
+    cs.len = 0;
+    cs.ptr = 0;
+    cs.read_status = READ_EMPTY;
+
+    return cs;
+  }
+
+  if (p->buf[start_byte] == 0xFD) {
+    cs.len = 0;
+    cs.ptr = 0;
+    cs.read_status = READ_FINISHED;
+
+    return cs;
+  }
+
+  cs.len = *(size_t *)&p->buf[start_byte];
+  cs.ptr = &p->buf[start_byte + sizeof(size_t)];
+  cs.read_status = READ_SUCCESS;
+
+  if (cs.ptr[cs.len] != VALUE_TERM_BYTE) {
+    cs.len = 0;
+    cs.ptr = 0;
+    cs.read_status = READ_ERROR;
+
+    // return cs;
+  }
+
+  return cs;
+}
+
 CSlice raw_qpage_pop(RawQPage *p, size_t start_byte) {
-#ifdef CONSTANT_TIME_READ
-  return raw_qpage_pop_fast_read(p, start_byte);
-#else
   size_t i, end;
   CSlice cs;
 
@@ -199,7 +200,6 @@ CSlice raw_qpage_pop(RawQPage *p, size_t start_byte) {
   cs.read_status = READ_SUCCESS;
 
   return cs;
-#endif
 }
 
 void raw_qpage_drop(RawQPage *p) { munmap(p, sizeof(RawQPage)); }

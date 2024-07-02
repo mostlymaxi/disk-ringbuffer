@@ -44,7 +44,24 @@ impl Page {
     /// attemps to push a message into the page and returns the number of bytes written.
     /// a return value of zero implies that the page is full and that the writer should try
     /// again on a new page
-    pub fn try_push<T: AsRef<[u8]>>(&self, input: T) -> Result<usize, i32> {
+    #[cfg(feature = "fast-read")]
+    pub fn try_push<T: AsRef<[u8]>>(&self, input: T) -> Result<usize, i64> {
+        let input = input.as_ref();
+
+        unsafe {
+            match raw_qpage_push_fast_read(self.raw, input.as_ptr(), input.len()) {
+                i @ ..=-1 => Err(i),
+                // a return value of 0 implies the page is full
+                i @ 0.. => Ok(i as usize),
+            }
+        }
+    }
+
+    /// attemps to push a message into the page and returns the number of bytes written.
+    /// a return value of zero implies that the page is full and that the writer should try
+    /// again on a new page
+    #[cfg(not(feature = "fast-read"))]
+    pub fn try_push<T: AsRef<[u8]>>(&self, input: T) -> Result<usize, i64> {
         let input = input.as_ref();
 
         unsafe {
@@ -58,7 +75,29 @@ impl Page {
 
     /// attempts to pop a message from the page and returns an optional ReadResult. a
     /// None value implies that there are no new messages to read
-    pub fn try_pop(&self, start_byte: usize) -> Result<Option<ReadResult>, i32> {
+    #[cfg(feature = "fast-read")]
+    pub fn try_pop(&self, start_byte: usize) -> Result<Option<ReadResult>, i64> {
+        let slice = unsafe {
+            let cs = raw_qpage_pop_fast_read(self.raw, start_byte);
+
+            let cs = match cs.read_status {
+                i @ ..=-1 => return Err(i),
+                0 => cs,
+                1 => return Ok(Some(ReadResult::Continue)),
+                2 => return Ok(None),
+                _ => unreachable!(),
+            };
+
+            slice::from_raw_parts(cs.ptr, cs.len)
+        };
+
+        Ok(Some(ReadResult::Msg(String::from_utf8_lossy(slice))))
+    }
+
+    /// attempts to pop a message from the page and returns an optional ReadResult. a
+    /// None value implies that there are no new messages to read
+    #[cfg(not(feature = "fast-read"))]
+    pub fn try_pop(&self, start_byte: usize) -> Result<Option<ReadResult>, i64> {
         let slice = unsafe {
             let cs = raw_qpage_pop(self.raw, start_byte);
 
