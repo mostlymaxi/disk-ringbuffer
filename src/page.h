@@ -16,7 +16,7 @@
 //
 // #define CONSTANT_TIME_READ 1 - fix this
 
-#define QUEUE_SIZE 4096 * 32000
+#define QUEUE_SIZE 4096 * 16000
 #define READ_ERROR -1
 #define VALUE_TERM_BYTE 0xFF
 
