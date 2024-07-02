@@ -2,34 +2,13 @@ use super::*;
 use std::path::PathBuf;
 use std::{borrow::Cow, slice, str};
 
+/// a wrapper around read results that contains either the message or
+/// informs the reader that it finished reading the page and should open
+/// the next one
 pub enum ReadResult<'a> {
     Msg(Cow<'a, str>),
     Continue,
 }
-
-// /// a wrapper around my implementation of a Rust "Slice" in C
-// #[repr(C)]
-// struct CSlice {
-//     len: cty::size_t,
-//     ptr: *const u8,
-//     read_status: cty::c_int,
-// }
-//
-// /// a wrapper around C struct RawQPage
-// #[repr(C)]
-// struct CPage {
-//     is_ready: AtomicUsize,
-//     write_idx_lock: AtomicUsize,
-//     last_safe_write_idx: AtomicUsize,
-//     buf: [cty::c_uchar; QUEUE_SIZE],
-// }
-//
-// extern "C" {
-//     fn raw_qpage_new_rs(path: *const u8, path_len: usize) -> *mut CPage;
-//     fn raw_qpage_push(p: *mut CPage, buf: *const u8, len: usize) -> cty::c_int;
-//     fn raw_qpage_drop(p: *mut CPage);
-//     fn raw_qpage_pop(p: *const CPage, start_byte: usize) -> CSlice;
-// }
 
 /// a convenience wrapper around CPage to keep track of the directory it was made in (path)
 pub struct Page {
@@ -62,6 +41,9 @@ impl Page {
         }
     }
 
+    /// attemps to push a message into the page and returns the number of bytes written.
+    /// a return value of zero implies that the page is full and that the writer should try
+    /// again on a new page
     pub fn try_push<T: AsRef<[u8]>>(&self, input: T) -> Result<usize, i32> {
         let input = input.as_ref();
 
@@ -74,7 +56,8 @@ impl Page {
         }
     }
 
-    // TODO: think of a better way to return result with READ_EMPTY in mind
+    /// attempts to pop a message from the page and returns an optional ReadResult. a
+    /// None value implies that there are no new messages to read
     pub fn try_pop(&self, start_byte: usize) -> Result<Option<ReadResult>, i32> {
         let slice = unsafe {
             let cs = raw_qpage_pop(self.raw, start_byte);
