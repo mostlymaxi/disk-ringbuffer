@@ -1,4 +1,5 @@
-// cleanup the build to not include a ton of junk (maybe?)
+use std::env;
+use std::path::PathBuf;
 
 fn main() {
     let bindings = bindgen::Builder::default()
@@ -7,8 +8,11 @@ fn main() {
         .generate()
         .expect("Unable to generate bindings");
 
+    let out_path =
+        PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR environment variable not set!"));
+
     bindings
-        .write_to_file("src/bindings.rs")
+        .write_to_file(out_path.join("bindings.rs"))
         .expect("Couldn't write bindings!");
 
     cc::Build::new().file("src/page.c").compile("page");
