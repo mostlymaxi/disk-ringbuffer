@@ -5,7 +5,6 @@ use std::sync::{Arc, RwLock};
 use thiserror::Error;
 
 /// A thread safe ringbuf receiver
-///
 #[derive(Clone)]
 pub struct Reader {
     path: PathBuf,
@@ -47,7 +46,6 @@ impl From<i32> for RingbufError {
     }
 }
 
-const TEMP_MAX_TOTAL_PAGES: usize = 4;
 const PAGE_EXT: &str = "page.bin";
 
 fn check_valid_page(entry: DirEntry) -> Option<usize> {
@@ -79,7 +77,7 @@ fn find_pages<P: AsRef<Path>>(path: P) -> Result<usize, RingbufError> {
     Ok(write_page_count)
 }
 
-pub fn new<P: Into<PathBuf>>(path: P) -> Result<(Writer, Reader), RingbufError> {
+pub fn new<P: Into<PathBuf>>(path: P, max_pages: usize) -> Result<(Writer, Reader), RingbufError> {
     let path = path.into();
     std::fs::create_dir_all(&path)?;
 
@@ -109,7 +107,7 @@ pub fn new<P: Into<PathBuf>>(path: P) -> Result<(Writer, Reader), RingbufError> 
             write_page_count: wp_count.clone(),
             write_page_no: 0,
             write_page: page.clone(),
-            max_total_pages: TEMP_MAX_TOTAL_PAGES,
+            max_total_pages: max_pages,
             _lock: _lock.clone(),
         },
         Reader {
@@ -118,7 +116,7 @@ pub fn new<P: Into<PathBuf>>(path: P) -> Result<(Writer, Reader), RingbufError> 
             read_page_no: 0,
             read_page: page,
             read_start_byte: 0,
-            max_total_pages: TEMP_MAX_TOTAL_PAGES,
+            max_total_pages: max_pages,
             _lock,
         },
     ))
@@ -145,6 +143,11 @@ impl Writer {
 
             *page_count += 1;
             self.write_page_no += 1;
+
+            // setting max_total_pages to zero implies an unbounded ringbuf / queue
+            if self.max_total_pages == 0 {
+                return Ok(());
+            }
 
             if *page_count >= self.max_total_pages {
                 std::fs::remove_file(
@@ -234,19 +237,19 @@ impl Reader {
 #[test]
 fn lock_test() {
     let test_dir_path = "test-lock";
-    let (_tx, _rx) = new(test_dir_path).unwrap();
-    assert!(new(test_dir_path).is_err());
+    let (_tx, _rx) = new(test_dir_path, 2).unwrap();
+    assert!(new(test_dir_path, 2).is_err());
 
     drop(_tx);
     drop(_rx);
-    let (_tx, _rx) = new(test_dir_path).unwrap();
+    let (_tx, _rx) = new(test_dir_path, 2).unwrap();
     std::fs::remove_dir_all(test_dir_path).unwrap();
 }
 
 #[test]
 fn seq_test() {
     let test_dir_path = "test-seq";
-    let (mut tx, mut rx) = new(test_dir_path).unwrap();
+    let (mut tx, mut rx) = new(test_dir_path, 8).unwrap();
 
     let now = std::time::Instant::now();
     for i in 0..50_000_000 {
@@ -266,7 +269,7 @@ fn seq_test() {
 #[test]
 fn spsc_test() {
     let test_dir_path = "test-spsc";
-    let (mut tx, mut rx) = new(test_dir_path).unwrap();
+    let (mut tx, mut rx) = new(test_dir_path, 8).unwrap();
 
     let now = std::time::Instant::now();
     let t = std::thread::spawn(move || {
