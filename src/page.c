@@ -29,7 +29,7 @@ RawQPage *raw_qpage_new(char *path) {
 // it's so much better not to... but unfortunately
 // this becomes a pain in the ass when passing strings
 // to c
-RawQPage *raw_qpage_new_rs(char *path, size_t path_len) {
+RawQPage *raw_qpage_new_rs(const unsigned char *path, size_t path_len) {
   char path_with_null_term[path_len + 1];
 
   memcpy(path_with_null_term, path, path_len);
@@ -64,7 +64,7 @@ int raw_qpage_push_fast_read(RawQPage *p, char *buf, size_t len) {
   return len + sizeof(size_t) + 1;
 }
 
-int raw_qpage_push(RawQPage *p, char *buf, size_t len) {
+int raw_qpage_push(RawQPage *p, const unsigned char *buf, size_t len) {
 #ifdef CONSTANT_TIME_READ
   return raw_qpage_push_fast_read(p, buf, len);
 #else
@@ -119,7 +119,7 @@ CSlice raw_qpage_pop_fast_read(RawQPage *p, size_t start_byte) {
   end = (QUEUE_SIZE < end) ? QUEUE_SIZE : end;
 
   cs.len = *(size_t *)&p->buf[start_byte];
-  cs.ptr = (char *)&p->buf[start_byte + sizeof(size_t)];
+  cs.ptr = &p->buf[start_byte + sizeof(size_t)];
 
   if (p->buf[start_byte + cs.len + sizeof(size_t)] != VALUE_TERM_BYTE) {
     cs.len = 0;
@@ -195,7 +195,7 @@ CSlice raw_qpage_pop(RawQPage *p, size_t start_byte) {
   }
 
   cs.len = i - start_byte;
-  cs.ptr = (char *)&p->buf[start_byte];
+  cs.ptr = &p->buf[start_byte];
   cs.read_status = READ_SUCCESS;
 
   return cs;
