@@ -15,5 +15,8 @@ fn main() {
         .write_to_file(out_path.join("bindings.rs"))
         .expect("Couldn't write bindings!");
 
-    cc::Build::new().file("src/page.c").compile("page");
+    cc::Build::new()
+        .std("gnu17")
+        .file("src/page.c")
+        .compile("page");
 }
