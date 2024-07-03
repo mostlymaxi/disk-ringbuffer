@@ -1,11 +1,11 @@
 /*!
 
-# On Disk Ringbuffer
+# On-Disk Ringbuffer
 
-This is an extremely simple implementation of an on disk write-only log that
+This is an extremely simple implementation of an on-disk broadcast channel that
 sort of pretends to be a ringbuffer! It uses memory-mapped pages to have interprocess,
 lock-free, reads and writes. It's blazingly fast, but tends to hog disk-space for better
-efficiency (less but bigger memory-mapped pages).
+efficiency (fewer but bigger memory-mapped pages).
 
 
 ## Example
@@ -63,3 +63,5 @@ include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
 
 pub mod page;
 pub mod ringbuf;
+mod rsv;
+
