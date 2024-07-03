@@ -47,9 +47,9 @@ typedef struct {
 } CSlice;
 
 typedef struct {
-  atomic_size_t is_ready;
-  atomic_size_t write_idx_lock;
-  atomic_size_t last_safe_write_idx;
+  _Atomic(size_t) is_ready;
+  _Atomic(size_t) write_idx_lock;
+  _Atomic(size_t) last_safe_write_idx;
   unsigned char buf[QUEUE_SIZE];
 } RawQPage;
 
