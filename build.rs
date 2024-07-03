@@ -15,5 +15,9 @@ fn main() {
         .write_to_file(out_path.join("bindings.rs"))
         .expect("Couldn't write bindings!");
 
-    cc::Build::new().warnings(true).extra_warnings(true).flag("-latomic").file("src/page.c").compile("page");
+    cc::Build::new()
+        .warnings(true)
+        .extra_warnings(true)
+        .file("src/page.c")
+        .compile("page");
 }
