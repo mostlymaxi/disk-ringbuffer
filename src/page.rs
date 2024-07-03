@@ -10,6 +10,11 @@ pub enum ReadResult<'a> {
     Continue,
 }
 
+pub enum ReadAllResult<'a> {
+    Msgs(Vec<Cow<'a, str>>),
+    Continue,
+}
+
 /// a convenience wrapper around CPage to keep track of the directory it was made in (path)
 pub struct Page {
     raw: *mut RawQPage,
@@ -113,6 +118,24 @@ impl Page {
         };
 
         Ok(Some(ReadResult::Msg(String::from_utf8_lossy(slice))))
+    }
+
+    pub fn try_pop_all(&self, start_byte: usize) -> Result<Option<ReadAllResult>, i64> {
+        let slice = unsafe {
+            let cs = raw_qpage_pop_all(self.raw, start_byte);
+
+            let cs = match cs.read_status {
+                i @ ..=-1 => return Err(i),
+                0 => cs,
+                1 => return Ok(Some(ReadAllResult::Continue)),
+                2 => return Ok(None),
+                _ => unreachable!(),
+            };
+
+            slice::from_raw_parts(cs.ptr, cs.len)
+        };
+
+        Ok(Some(ReadAllResult::Msgs(rsv::decode_rsv(slice))))
     }
 }
 

@@ -345,3 +345,47 @@ fn spsc_test() {
 
     std::fs::remove_dir_all(test_dir_path).unwrap();
 }
+
+#[test]
+fn mpsc_test() {
+    let test_dir_path = "test-mpsc";
+    let num_threads = 4;
+    let mut threads = Vec::new();
+
+    let (tx, mut rx) = new(test_dir_path, 0).unwrap();
+
+    let now = std::time::Instant::now();
+
+    for _ in 0..num_threads {
+        let mut tx_clone = tx.clone();
+        threads.push(std::thread::spawn(move || {
+            for i in 0..50_000_000 / num_threads {
+                tx_clone.push(i.to_string()).unwrap();
+            }
+        }));
+    }
+
+    drop(tx);
+
+    let mut i = 0;
+    loop {
+        if i == 50_000_000 {
+            break;
+        }
+
+        let _m = match rx.pop().unwrap() {
+            Some(_m) => _m,
+            None => continue,
+        };
+
+        i += 1;
+    }
+
+    for t in threads {
+        t.join().unwrap();
+    }
+
+    eprintln!("took {} ms", now.elapsed().as_millis());
+
+    std::fs::remove_dir_all(test_dir_path).unwrap();
+}

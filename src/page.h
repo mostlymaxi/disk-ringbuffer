@@ -72,5 +72,7 @@ size_t _get_write_idx_spin(RawQPage *p, size_t start_byte);
 
 CSlice raw_qpage_pop(RawQPage *p, size_t start_byte);
 
+CSlice raw_qpage_pop_all(RawQPage *p, size_t start_byte);
+
 void raw_qpage_drop(RawQPage *p);
 #endif

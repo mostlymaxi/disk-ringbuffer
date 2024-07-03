@@ -122,6 +122,7 @@ size_t _get_write_idx_spin(RawQPage *p, size_t start_byte) {
   return end;
 }
 
+// TODO: Check performance difference for large messages
 CSlice raw_qpage_pop_fast_read(RawQPage *p, size_t start_byte) {
   size_t end;
   CSlice cs;
@@ -155,6 +156,43 @@ CSlice raw_qpage_pop_fast_read(RawQPage *p, size_t start_byte) {
 
     // return cs;
   }
+
+  return cs;
+}
+
+CSlice raw_qpage_pop_all(RawQPage *p, size_t start_byte) {
+  size_t end;
+  CSlice cs;
+
+  end = _get_write_idx_spin(p, start_byte);
+
+  if (end <= start_byte) {
+    cs.len = 0;
+    cs.ptr = 0;
+    cs.read_status = READ_EMPTY;
+
+    return cs;
+  }
+
+  if (p->buf[start_byte] == 0xFD) {
+    cs.len = 0;
+    cs.ptr = 0;
+    cs.read_status = READ_FINISHED;
+
+    return cs;
+  }
+
+  if (p->buf[end] != VALUE_TERM_BYTE) {
+    cs.len = 0;
+    cs.ptr = 0;
+    cs.read_status = READ_ERROR;
+
+    return cs;
+  }
+
+  cs.len = end - start_byte;
+  cs.ptr = &p->buf[start_byte];
+  cs.read_status = READ_SUCCESS;
 
   return cs;
 }
