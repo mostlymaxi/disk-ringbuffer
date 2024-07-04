@@ -1,3 +1,4 @@
+use super::raw_qpage_drop;
 use crate::page::{Page, ReadResult};
 use std::fs::DirEntry;
 use std::path::{Path, PathBuf};
@@ -123,6 +124,11 @@ pub fn new<P: Into<PathBuf>>(path: P, max_pages: usize) -> Result<(Writer, Reade
 }
 
 impl Writer {
+    pub fn super_unsafe_page_cleanup_never_call_this_unless_you_know_what_youre_doing(&mut self) {
+        self.write_page
+            .super_unsafe_page_cleanup_never_call_this_unless_you_know_what_youre_doing();
+    }
+
     fn page_flip(&mut self) -> Result<(), std::io::Error> {
         let page_count = self.write_page_count.read().expect("poisoned lock!");
 

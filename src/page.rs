@@ -36,6 +36,10 @@ impl Clone for Page {
 }
 
 impl Page {
+    pub fn super_unsafe_page_cleanup_never_call_this_unless_you_know_what_youre_doing(&mut self) {
+        unsafe { raw_qpage_drop(self.raw) };
+    }
+
     pub fn new<P: AsRef<str>>(path: P) -> Self {
         let path = path.as_ref();
         let c_page = unsafe { raw_qpage_new_rs(path.as_ptr(), path.len()) };
