@@ -209,6 +209,7 @@ impl Reader {
         self.read_page
             .super_unsafe_page_cleanup_never_call_this_unless_you_know_what_youre_doing();
     }
+
     #[cfg(feature = "fast-read")]
     pub fn pop(&mut self) -> Result<Option<String>, RingbufError> {
         const sizeof_usize: usize = std::mem::size_of::<usize>();

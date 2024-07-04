@@ -22,6 +22,7 @@ pub struct Page {
 }
 
 unsafe impl Send for Page {}
+unsafe impl Sync for Page {}
 
 impl Drop for Page {
     fn drop(&mut self) {
