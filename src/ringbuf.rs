@@ -129,6 +129,18 @@ impl Writer {
             .super_unsafe_page_cleanup_never_call_this_unless_you_know_what_youre_doing();
     }
 
+    pub fn new_reader(&self) -> Reader {
+        Reader {
+            path: self.path.clone(),
+            write_page_count: self.write_page_count.clone(),
+            read_page_no: 0, // start from beginning or end?
+            read_page: self.write_page.clone(),
+            read_start_byte: 0,
+            max_total_pages: self.max_total_pages,
+            _lock: self._lock.clone(),
+        }
+    }
+
     fn page_flip(&mut self) -> Result<(), std::io::Error> {
         let page_count = self.write_page_count.read().expect("poisoned lock!");
 
