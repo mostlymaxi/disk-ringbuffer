@@ -49,6 +49,8 @@ impl From<i64> for RingbufError {
 
 const PAGE_EXT: &str = "page.bin";
 
+/// helper function to parse out page number from
+/// ```[usize].page.bin```
 fn check_valid_page(entry: DirEntry) -> Option<usize> {
     let path = entry.path();
     let file_name = path.file_name()?;

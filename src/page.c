@@ -1,4 +1,5 @@
 #include "page.h"
+#include "immintrin.h"
 
 RawQPage *raw_qpage_new(char *path) {
   RawQPage *p;
@@ -110,7 +111,11 @@ size_t _get_write_idx_spin(RawQPage *p, size_t start_byte) {
         break;
       }
 
-      sleep(0);
+      // MAGIC COMMAND
+      // a noop on many systems
+      _mm_pause();
+
+      // sleep(0);
     }
 
     // TODO: maybe this should be atomic fetch min - C26 type stuff
