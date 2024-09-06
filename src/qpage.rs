@@ -83,6 +83,42 @@ impl QPage {
         Ok(QPagePopMsg::Msg(&self.buf[start_byte..end_byte]))
     }
 
+    //    u32        |  [u8]
+    // length of msg |  msg
+    fn push_raw(&mut self, msgs: &[u8]) -> Result<usize, QPageError> {
+        let start_idx = self
+            .write_idx_lock
+            .fetch_add(QUEUE_MAGIC_NUM + msgs.len(), Ordering::Relaxed);
+
+        if start_idx & !QUEUE_MAGIC_MASK == 0 {
+            return Err(QPageError);
+        }
+
+        let start_idx = start_idx & QUEUE_MAGIC_MASK;
+
+        // checking if the queue has enough space
+        if start_idx + msgs.len() >= DEFAULT_QUEUE_SIZE - 1 {
+            // adding marker that queue is full
+            // this only has to happen once
+            if start_idx < DEFAULT_QUEUE_SIZE {
+                self.buf[start_idx] = 0xFD;
+            }
+
+            // subtracting number of writers
+            self.write_idx_lock
+                .fetch_sub(QUEUE_MAGIC_NUM, Ordering::Release);
+
+            return Err(QPageError); // Page Full
+        }
+
+        self.buf[start_idx..start_idx + msgs.len()].copy_from_slice(msgs);
+
+        self.write_idx_lock
+            .fetch_sub(QUEUE_MAGIC_NUM, Ordering::Release);
+
+        Ok(msgs.len())
+    }
+
     fn push(&mut self, msg: &[u8]) -> Result<usize, QPageError> {
         if msg.len() > u32::MAX as usize {
             return Err(QPageError);

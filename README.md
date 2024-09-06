@@ -6,9 +6,7 @@ lock-free, reads and writes. It's blazingly fast, but tends to hog disk-space fo
 efficiency (fewer but bigger memory-mapped pages).
 
 
-
-
-## Example
+ Example
 ```rust
 use disk_ringbuffer::ringbuf;
 
