@@ -20,6 +20,7 @@ fast-read = []
 cty = "0.2.2"
 fslock = "0.2.1"
 memmap2 = "0.9.4"
+mmap-wrapper = "1.0.1"
 static_assertions = "1.1.0"
 thiserror = "1.0.61"
 

@@ -25,6 +25,8 @@ RawQPage *raw_qpage_new(char *path) {
   return p;
 }
 
+// |u32|[u8; len]|
+//
 // rust doesn't use null terminated strings because
 // it's so much better not to... but unfortunately
 // this becomes a pain in the ass when passing strings

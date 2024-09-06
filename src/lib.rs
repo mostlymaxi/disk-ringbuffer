@@ -62,6 +62,6 @@ fn thread_example() {
 include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
 
 pub mod page;
+pub mod qpage;
 pub mod ringbuf;
 mod rsv;
-
