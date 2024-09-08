@@ -1,8 +1,8 @@
-use crate::page::{Page, ReadResult};
+use crate::qpage::{PopResult, PushResult, QPage};
+use mmap_wrapper::{MmapMutWrapper, MmapWrapper};
 use std::fs::DirEntry;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
-use thiserror::Error;
 
 /// A thread safe ringbuf receiver
 #[derive(Clone)]
@@ -10,7 +10,7 @@ pub struct Reader {
     path: PathBuf,
     write_page_count: Arc<RwLock<usize>>,
     read_page_no: usize,
-    read_page: Page,
+    read_page: MmapMutWrapper<QPage>,
     read_start_byte: usize,
     max_total_pages: usize,
     _lock: Arc<fslock::LockFile>,
@@ -22,15 +22,18 @@ pub struct Writer {
     path: PathBuf,
     write_page_count: Arc<RwLock<usize>>,
     write_page_no: usize,
-    write_page: Page,
+    write_page: MmapMutWrapper<QPage>,
+    _internal_buf: Vec<u8>,
     max_total_pages: usize,
     _lock: Arc<fslock::LockFile>,
 }
 
-#[derive(Error, Debug)]
+#[derive(thiserror::Error, Debug)]
 pub enum RingbufError {
     #[error("invalid read")]
     ReadError,
+    #[error(transparent)]
+    QError(#[from] crate::qpage::Error),
     #[error(transparent)]
     IoError(#[from] std::io::Error),
     #[error("conflicting ringbuf path")]
@@ -78,7 +81,7 @@ fn find_pages<P: AsRef<Path>>(path: P) -> Result<usize, RingbufError> {
 }
 
 pub fn new<P: Into<PathBuf>>(path: P, max_pages: usize) -> Result<(Writer, Reader), RingbufError> {
-    let path = path.into();
+    let path: PathBuf = path.into();
     std::fs::create_dir_all(&path)?;
 
     let mut file = fslock::LockFile::open(&path.join("rb.lock"))?;
@@ -89,7 +92,7 @@ pub fn new<P: Into<PathBuf>>(path: P, max_pages: usize) -> Result<(Writer, Reade
 
     let latest_file_no = find_pages(&path)?;
     let wp_count = Arc::new(RwLock::new(latest_file_no));
-    let page = Page::new(
+    let page = QPage::new(
         path.join(latest_file_no.to_string())
             .with_extension(PAGE_EXT)
             .to_str()
@@ -101,11 +104,15 @@ pub fn new<P: Into<PathBuf>>(path: P, max_pages: usize) -> Result<(Writer, Reade
             })?,
     );
 
+    // TODO: reset on clone otherwise side effects
+    let _internal_buf = Vec::new();
+
     Ok((
         Writer {
             path: path.clone(),
             write_page_count: wp_count.clone(),
             write_page_no: 0,
+            _internal_buf,
             write_page: page.clone(),
             max_total_pages: max_pages,
             _lock: _lock.clone(),
@@ -120,6 +127,15 @@ pub fn new<P: Into<PathBuf>>(path: P, max_pages: usize) -> Result<(Writer, Reade
             _lock,
         },
     ))
+}
+
+impl Drop for Writer {
+    fn drop(&mut self) {
+        eprintln!("ping");
+        let _ = self.flush();
+
+        eprintln!("pong");
+    }
 }
 
 impl Writer {
@@ -168,18 +184,62 @@ impl Writer {
         Ok(())
     }
 
-    pub fn push<T: AsRef<[u8]>>(&mut self, input: T) -> Result<usize, RingbufError> {
-        loop {
-            let i = self.write_page.try_push(&input)?;
+    pub fn flush(&mut self) -> Result<usize, RingbufError> {
+        if self._internal_buf.is_empty() {
+            return Ok(0);
+        }
 
-            if i > 0 {
-                return Ok(i);
+        loop {
+            match self
+                .write_page
+                .get_inner()
+                .try_push_raw(&self._internal_buf)?
+            {
+                PushResult::BytesWritten(x) => {
+                    self._internal_buf.clear();
+                    return Ok(x);
+                }
+                PushResult::PageFull => {}
             }
 
             // a result of 0 implies a full page
             self.page_flip()?;
 
-            self.write_page = Page::new(
+            self.write_page = QPage::new(
+                self.path
+                    .join(self.write_page_no.to_string())
+                    .with_extension(PAGE_EXT)
+                    .to_str()
+                    .expect("this should always be unicode"),
+            );
+        }
+    }
+
+    pub fn push_buffered<T: AsRef<[u8]>>(&mut self, input: T) -> Result<usize, RingbufError> {
+        self._internal_buf
+            .extend(input.as_ref().len().to_le_bytes());
+        self._internal_buf.extend_from_slice(input.as_ref());
+
+        // TODO: Updated SOME_NUMBER with bytes to buffer
+        const SOME_NUMBER: usize = 8192;
+        if self._internal_buf.len() < SOME_NUMBER {
+            return Ok(input.as_ref().len() + size_of::<u32>());
+        }
+
+        self.flush()
+    }
+
+    pub fn push<T: AsRef<[u8]>>(&mut self, input: T) -> Result<usize, RingbufError> {
+        loop {
+            match self.write_page.get_inner().try_push(input.as_ref())? {
+                PushResult::BytesWritten(x) => return Ok(x),
+                PushResult::PageFull => {}
+            }
+
+            // a result of 0 implies a full page
+            self.page_flip()?;
+
+            self.write_page = QPage::new(
                 self.path
                     .join(self.write_page_no.to_string())
                     .with_extension(PAGE_EXT)
@@ -199,83 +259,47 @@ impl Iterator for Reader {
 }
 
 impl Reader {
-    #[cfg(feature = "fast-read")]
-    pub fn pop(&mut self) -> Result<Option<String>, RingbufError> {
-        const sizeof_usize: usize = std::mem::size_of::<usize>();
+    fn page_flip(&mut self) -> Result<(), RingbufError> {
+        if self.max_total_pages > 0 {
+            let page_count = self.write_page_count.read().expect("poisoned lock!");
 
-        loop {
-            match self.read_page.try_pop(self.read_start_byte)? {
-                None => return Ok(None), // no new messages
-                Some(ReadResult::Continue) => {}
-                Some(ReadResult::Msg(m)) => {
-                    self.read_start_byte += m.len() + sizeof_usize + 1;
-                    return Ok(Some(m.to_string()));
-                }
-            };
-
-            if self.max_total_pages > 0 {
-                let page_count = self.write_page_count.read().expect("poisoned lock!");
-
-                self.read_page_no = std::cmp::max(
-                    self.read_page_no + 1,
-                    page_count.saturating_sub(self.max_total_pages),
-                );
-            } else {
-                self.read_page_no += 1;
-            }
-
-            self.read_start_byte = 0;
-            self.read_page = Page::new(
-                self.path
-                    .join(self.read_page_no.to_string())
-                    .with_extension(PAGE_EXT)
-                    .to_str()
-                    .ok_or_else(|| {
-                        std::io::Error::new(
-                            std::io::ErrorKind::Other,
-                            "can't convert extension to utf-8",
-                        )
-                    })?,
+            self.read_page_no = std::cmp::max(
+                self.read_page_no + 1,
+                page_count.saturating_sub(self.max_total_pages),
             );
+        } else {
+            self.read_page_no += 1;
         }
+
+        self.read_start_byte = 0;
+        self.read_page = QPage::new(
+            self.path
+                .join(self.read_page_no.to_string())
+                .with_extension(PAGE_EXT)
+                .to_str()
+                .ok_or_else(|| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        "can't convert extension to utf-8",
+                    )
+                })?,
+        );
+
+        Ok(())
     }
 
-    #[cfg(not(feature = "fast-read"))]
     pub fn pop(&mut self) -> Result<Option<String>, RingbufError> {
         loop {
-            match self.read_page.try_pop(self.read_start_byte)? {
-                None => return Ok(None), // no new messages
-                Some(ReadResult::Continue) => {}
-                Some(ReadResult::Msg(m)) => {
-                    self.read_start_byte += m.len() + 1;
-                    return Ok(Some(m.to_string()));
+            match self.read_page.get_inner().try_pop(self.read_start_byte)? {
+                PopResult::Msg(m) => {
+                    self.read_start_byte += m.len() + size_of::<u32>();
+                    return Ok(Some(String::from_utf8_lossy(m).to_string()));
                 }
+                PopResult::NoNewMsgs => return Ok(None),
+                PopResult::PageDone => {}
             };
 
-            if self.max_total_pages > 0 {
-                let page_count = self.write_page_count.read().expect("poisoned lock!");
-
-                self.read_page_no = std::cmp::max(
-                    self.read_page_no + 1,
-                    page_count.saturating_sub(self.max_total_pages),
-                );
-            } else {
-                self.read_page_no += 1;
-            }
-
-            self.read_start_byte = 0;
-            self.read_page = Page::new(
-                self.path
-                    .join(self.read_page_no.to_string())
-                    .with_extension(PAGE_EXT)
-                    .to_str()
-                    .ok_or_else(|| {
-                        std::io::Error::new(
-                            std::io::ErrorKind::Other,
-                            "can't convert extension to utf-8",
-                        )
-                    })?,
-            );
+            self.page_flip()?;
         }
     }
 }
@@ -296,6 +320,7 @@ fn lock_test() {
 fn seq_test() {
     let test_dir_path = "test-seq";
     let (mut tx, mut rx) = new(test_dir_path, 0).unwrap();
+    eprintln!("ping");
 
     let now = std::time::Instant::now();
     for i in 0..50_000_000 {
@@ -303,13 +328,15 @@ fn seq_test() {
     }
 
     for i in 0..50_000_000 {
-        let m = rx.pop().unwrap().unwrap();
-        assert_eq!(m, i.to_string());
+        let m = rx.pop().unwrap();
+        assert_eq!(m, Some(i.to_string()));
     }
 
     eprintln!("took {} ms", now.elapsed().as_millis());
 
     std::fs::remove_dir_all(test_dir_path).unwrap();
+
+    eprintln!("pong");
 }
 
 #[test]
@@ -339,7 +366,7 @@ fn spsc_test() {
         i += 1;
     }
 
-    let _ = t.join().unwrap();
+    t.join().unwrap();
 
     eprintln!("took {} ms", now.elapsed().as_millis());
 

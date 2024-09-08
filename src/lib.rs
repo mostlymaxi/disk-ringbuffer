@@ -53,15 +53,5 @@ fn thread_example() {
 ```
 */
 
-#![allow(non_upper_case_globals)]
-#![allow(non_camel_case_types)]
-#![allow(non_snake_case)]
-// stackoverflow says i shouldn't suppress this warning
-#![allow(improper_ctypes)]
-
-include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
-
-pub mod page;
-pub mod qpage;
+mod qpage;
 pub mod ringbuf;
-mod rsv;

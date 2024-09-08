@@ -1,5 +1,6 @@
-use core::panic;
 use std::cmp;
+use std::fmt::{Display, Pointer};
+use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use mmap_wrapper::MmapMutWrapper;
@@ -10,29 +11,43 @@ const QUEUE_MAGIC_NUM: usize = 0b1 << ((size_of::<usize>() * 8) - 8);
 // 0000 0000 1111 ....
 const QUEUE_MAGIC_MASK: usize = QUEUE_MAGIC_NUM - 1;
 
-struct QPage {
+pub struct QPage {
     write_idx_lock: AtomicUsize,
     last_safe_write_idx: AtomicUsize,
     buf: [u8; DEFAULT_QUEUE_SIZE],
 }
 
-#[derive(Debug)]
-struct QPageError;
+#[derive(thiserror::Error, Debug)]
+pub enum Error {
+    WriteIdxLockOverflow,
+    MsgTooLong,
+}
 
-enum QPagePopMsg<'a> {
+impl Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", &self)
+    }
+}
+
+pub enum PopResult<'a> {
     Msg(&'a [u8]),
     NoNewMsgs,
     PageDone,
 }
 
+pub enum PushResult {
+    BytesWritten(usize),
+    PageFull,
+}
+
 impl QPage {
-    fn new<P: AsRef<str>>(path: P) -> MmapMutWrapper<QPage> {
+    pub fn new<P: AsRef<Path>>(path: P) -> MmapMutWrapper<QPage> {
         let f = std::fs::File::options()
             .read(true)
             .write(true)
             .create(true)
             .truncate(false)
-            .open(path.as_ref())
+            .open(path)
             .unwrap();
 
         let _ = f.set_len(std::mem::size_of::<QPage>() as u64);
@@ -46,7 +61,7 @@ impl QPage {
         let end_byte = self.last_safe_write_idx.load(Ordering::Relaxed);
 
         let end_byte = match start_byte.cmp(&end_byte) {
-            cmp::Ordering::Greater => loop {
+            cmp::Ordering::Greater | cmp::Ordering::Equal => loop {
                 let end_byte = self.write_idx_lock.load(Ordering::Acquire);
 
                 if (end_byte & !QUEUE_MAGIC_MASK) == 0 {
@@ -65,7 +80,7 @@ impl QPage {
         end_byte.min(DEFAULT_QUEUE_SIZE)
     }
 
-    fn pop(&self, start_byte: usize) -> Result<QPagePopMsg, QPageError> {
+    pub fn try_pop(&self, start_byte: usize) -> Result<PopResult, Error> {
         let end_byte = self.get_write_idx_spin(start_byte);
 
         if end_byte < start_byte {
@@ -73,25 +88,32 @@ impl QPage {
         }
 
         if end_byte == start_byte {
-            return Ok(QPagePopMsg::NoNewMsgs);
+            return Ok(PopResult::NoNewMsgs);
         }
 
         if self.buf[start_byte] == 0xFD {
-            return Ok(QPagePopMsg::PageDone);
+            return Ok(PopResult::PageDone);
         }
 
-        Ok(QPagePopMsg::Msg(&self.buf[start_byte..end_byte]))
+        let msg_len = u32::from_le_bytes(
+            self.buf[start_byte..start_byte + size_of::<u32>()]
+                .try_into()
+                .unwrap(),
+        );
+
+        let start_byte = start_byte + size_of::<u32>();
+        let end_byte = start_byte + msg_len as usize;
+
+        Ok(PopResult::Msg(&self.buf[start_byte..end_byte]))
     }
 
-    //    u32        |  [u8]
-    // length of msg |  msg
-    fn push_raw(&mut self, msgs: &[u8]) -> Result<usize, QPageError> {
+    pub fn try_push_raw(&mut self, msgs: &[u8]) -> Result<PushResult, Error> {
         let start_idx = self
             .write_idx_lock
             .fetch_add(QUEUE_MAGIC_NUM + msgs.len(), Ordering::Relaxed);
 
         if start_idx & !QUEUE_MAGIC_MASK == 0 {
-            return Err(QPageError);
+            return Err(Error::WriteIdxLockOverflow);
         }
 
         let start_idx = start_idx & QUEUE_MAGIC_MASK;
@@ -108,7 +130,7 @@ impl QPage {
             self.write_idx_lock
                 .fetch_sub(QUEUE_MAGIC_NUM, Ordering::Release);
 
-            return Err(QPageError); // Page Full
+            return Ok(PushResult::PageFull);
         }
 
         self.buf[start_idx..start_idx + msgs.len()].copy_from_slice(msgs);
@@ -116,12 +138,12 @@ impl QPage {
         self.write_idx_lock
             .fetch_sub(QUEUE_MAGIC_NUM, Ordering::Release);
 
-        Ok(msgs.len())
+        Ok(PushResult::BytesWritten(msgs.len()))
     }
 
-    fn push(&mut self, msg: &[u8]) -> Result<usize, QPageError> {
+    pub fn try_push(&self, msg: &[u8]) -> Result<PushResult, Error> {
         if msg.len() > u32::MAX as usize {
-            return Err(QPageError);
+            return Err(Error::MsgTooLong);
         }
 
         let start_idx = self.write_idx_lock.fetch_add(
@@ -129,8 +151,8 @@ impl QPage {
             Ordering::Relaxed,
         );
 
-        if start_idx & !QUEUE_MAGIC_MASK == 0 {
-            return Err(QPageError);
+        if start_idx & !QUEUE_MAGIC_MASK != 0 {
+            unreachable!("something went very very very wrong with the spinlock D:");
         }
 
         let start_idx = start_idx & QUEUE_MAGIC_MASK;
@@ -140,24 +162,27 @@ impl QPage {
             // adding marker that queue is full
             // this only has to happen once
             if start_idx < DEFAULT_QUEUE_SIZE {
-                self.buf[start_idx] = 0xFD;
+                unsafe {
+                    let super_scary = self.buf.as_ptr() as *mut u8;
+                    self.buf[start_idx] = 0xFD;
+                }
             }
 
             // subtracting number of writers
             self.write_idx_lock
                 .fetch_sub(QUEUE_MAGIC_NUM, Ordering::Release);
 
-            return Err(QPageError); // Page Full
+            return Ok(PushResult::PageFull);
         }
 
         self.buf[start_idx..start_idx + size_of::<u32>()]
-            .copy_from_slice(&(msg.len() as u32).to_be_bytes());
+            .copy_from_slice(&(msg.len() as u32).to_le_bytes());
         self.buf[start_idx + size_of::<u32>()..start_idx + size_of::<u32>() + msg.len()]
             .copy_from_slice(msg);
 
         self.write_idx_lock
             .fetch_sub(QUEUE_MAGIC_NUM, Ordering::Release);
 
-        Ok(msg.len() + size_of::<u32>())
+        Ok(PushResult::BytesWritten(msg.len() + size_of::<u32>()))
     }
 }
