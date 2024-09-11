@@ -1,6 +1,6 @@
 [package]
 name = "disk-ringbuffer"
-version = "0.5.0"
+version = "0.6.1"
 edition = "2021"
 authors = ["Maxi Saparov <max.saparov@gmail.com>"]
 description = "lock free on disk ringbuffer to be used in the implementation of Franz"
@@ -13,18 +13,9 @@ license = "MIT"
 categories = ["database-implementations", "data-structures"]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
-[features]
-fast-read = []
-
 [dependencies]
-cty = "0.2.2"
 fslock = "0.2.1"
 memmap2 = "0.9.4"
 mmap-wrapper = "2.0.1"
 static_assertions = "1.1.0"
 thiserror = "1.0.61"
-yoke = "0.7.4"
-
-[build-dependencies]
-cc = "1.0"
-bindgen = "0.69.4"
