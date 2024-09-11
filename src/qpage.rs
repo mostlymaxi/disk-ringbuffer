@@ -12,6 +12,7 @@ type MsgLengthType = u32;
 pub const DEFAULT_QUEUE_SIZE: usize = 4 + 2_usize.pow(28) - 1;
 pub const DEFAULT_MAX_MSG_SIZE: usize = 2_usize.pow(24) - 1;
 
+const_assert!(DEFAULT_QUEUE_SIZE > DEFAULT_MAX_MSG_SIZE);
 const_assert!(DEFAULT_MAX_MSG_SIZE < MsgLengthType::MAX as usize);
 // 0000 0001 0000 ....
 const QUEUE_MAGIC_NUM: usize = 0b1 << (usize::BITS - 8);
