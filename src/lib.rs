@@ -1,11 +1,11 @@
 /*!
 
-# On Disk Ringbuffer
+# On-Disk Ringbuffer
 
-This is an extremely simple implementation of an on disk write-only log that
+This is an extremely simple implementation of an on-disk broadcast channel that
 sort of pretends to be a ringbuffer! It uses memory-mapped pages to have interprocess,
 lock-free, reads and writes. It's blazingly fast, but tends to hog disk-space for better
-efficiency (less but bigger memory-mapped pages).
+efficiency (fewer but bigger memory-mapped pages).
 
 
 ## Example
@@ -53,13 +53,5 @@ fn thread_example() {
 ```
 */
 
-#![allow(non_upper_case_globals)]
-#![allow(non_camel_case_types)]
-#![allow(non_snake_case)]
-// stackoverflow says i shouldn't suppress this warning
-#![allow(improper_ctypes)]
-
-include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
-
-pub mod page;
+mod qpage;
 pub mod ringbuf;
