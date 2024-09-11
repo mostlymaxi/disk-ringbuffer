@@ -17,7 +17,6 @@ pub struct Reader {
 }
 
 /// A thread safe ringbuf sender
-#[derive(Clone)]
 pub struct Writer {
     path: PathBuf,
     write_page_count: Arc<RwLock<usize>>,
@@ -26,6 +25,20 @@ pub struct Writer {
     _internal_buf: Vec<u8>,
     max_total_pages: usize,
     _lock: Arc<fslock::LockFile>,
+}
+
+impl Clone for Writer {
+    fn clone(&self) -> Self {
+        Writer {
+            path: self.path.clone(),
+            write_page_count: self.write_page_count.clone(),
+            write_page_no: self.write_page_no,
+            write_page: self.write_page.clone(),
+            _internal_buf: Vec::new(),
+            max_total_pages: self.max_total_pages,
+            _lock: self._lock.clone(),
+        }
+    }
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -38,15 +51,6 @@ pub enum RingbufError {
     IoError(#[from] std::io::Error),
     #[error("conflicting ringbuf path")]
     RingbufExists,
-}
-
-impl From<i64> for RingbufError {
-    fn from(error: i64) -> RingbufError {
-        match error {
-            -1 => RingbufError::ReadError,
-            _ => unreachable!(),
-        }
-    }
 }
 
 const PAGE_EXT: &str = "page.bin";
@@ -65,19 +69,12 @@ fn check_valid_page(entry: DirEntry) -> Option<usize> {
     Some(num)
 }
 
-fn find_pages<P: AsRef<Path>>(path: P) -> Result<usize, RingbufError> {
-    let mut write_page_count = 0;
-
-    for entry in std::fs::read_dir(path)? {
-        let entry = entry?;
-        let Some(num) = check_valid_page(entry) else {
-            continue;
-        };
-
-        write_page_count = std::cmp::max(write_page_count, num);
-    }
-
-    Ok(write_page_count)
+fn find_latest_page_num<P: AsRef<Path>>(path: P) -> Result<usize, RingbufError> {
+    Ok(std::fs::read_dir(path)?
+        .filter_map(|entry| entry.ok())
+        .flat_map(check_valid_page)
+        .max()
+        .unwrap_or(0))
 }
 
 pub fn new<P: Into<PathBuf>>(path: P, max_pages: usize) -> Result<(Writer, Reader), RingbufError> {
@@ -90,7 +87,7 @@ pub fn new<P: Into<PathBuf>>(path: P, max_pages: usize) -> Result<(Writer, Reade
     }
     let _lock = Arc::new(file);
 
-    let latest_file_no = find_pages(&path)?;
+    let latest_file_no = find_latest_page_num(&path)?;
     let wp_count = Arc::new(RwLock::new(latest_file_no));
     let page = QPage::new(
         path.join(latest_file_no.to_string())
@@ -215,7 +212,7 @@ impl Writer {
 
     pub fn push_buffered<T: AsRef<[u8]>>(&mut self, input: T) -> Result<usize, RingbufError> {
         self._internal_buf
-            .extend(input.as_ref().len().to_le_bytes());
+            .extend((input.as_ref().len() as u32).to_le_bytes());
         self._internal_buf.extend_from_slice(input.as_ref());
 
         // TODO: Updated SOME_NUMBER with bytes to buffer
@@ -323,6 +320,27 @@ fn seq_test() {
     for i in 0..50_000_000 {
         tx.push(i.to_string()).unwrap();
     }
+
+    for i in 0..50_000_000 {
+        let m = rx.pop().unwrap();
+        assert_eq!(m, Some(i.to_string()));
+    }
+
+    eprintln!("took {} ms", now.elapsed().as_millis());
+
+    std::fs::remove_dir_all(test_dir_path).unwrap();
+}
+
+#[test]
+fn seq_buffered_test() {
+    let test_dir_path = "test-seq-buf";
+    let (mut tx, mut rx) = new(test_dir_path, 0).unwrap();
+
+    let now = std::time::Instant::now();
+    for i in 0..50_000_000 {
+        tx.push_buffered(i.to_string()).unwrap();
+    }
+    tx.flush().unwrap();
 
     for i in 0..50_000_000 {
         let m = rx.pop().unwrap();

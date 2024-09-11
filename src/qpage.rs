@@ -113,7 +113,7 @@ impl QPage {
             .write_idx_lock
             .fetch_add(QUEUE_MAGIC_NUM + msgs.len(), Ordering::Relaxed);
 
-        if start_idx & !QUEUE_MAGIC_MASK == 0 {
+        if ((start_idx + QUEUE_MAGIC_NUM) & !QUEUE_MAGIC_MASK) == 0 {
             return Err(Error::WriteIdxLockOverflow);
         }
 
@@ -153,7 +153,7 @@ impl QPage {
         );
 
         if ((start_idx + QUEUE_MAGIC_NUM) & !QUEUE_MAGIC_MASK) == 0 {
-            unreachable!("writers overflowed at idx: {:X}", start_idx);
+            return Err(Error::WriteIdxLockOverflow);
         }
 
         let start_idx = start_idx & QUEUE_MAGIC_MASK;
