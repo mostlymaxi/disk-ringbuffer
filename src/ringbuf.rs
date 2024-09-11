@@ -1,9 +1,12 @@
 use crate::qpage::{self, PopResult, PushResult, QPage};
-use mmap_wrapper::{MmapMutWrapper, MmapWrapper};
+use mmap_wrapper::MmapMutWrapper;
 use static_assertions::const_assert;
 use std::fs::DirEntry;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
+
+pub const DEFAULT_INTERNAL_BUF_SIZE: usize = 4096;
+const_assert!(DEFAULT_INTERNAL_BUF_SIZE < qpage::DEFAULT_MAX_MSG_SIZE);
 
 /// A thread safe ringbuf receiver
 #[derive(Clone)]
@@ -212,19 +215,15 @@ impl Writer {
     }
 
     pub fn push_buffered<T: AsRef<[u8]>>(&mut self, input: T) -> Result<usize, RingbufError> {
-        self._internal_buf
-            .extend((input.as_ref().len() as u32).to_le_bytes());
-        self._internal_buf.extend_from_slice(input.as_ref());
-
-        // TODO: Updated SOME_NUMBER with bytes to buffer
-        const SOME_NUMBER: usize = 512;
-        const_assert!(SOME_NUMBER < qpage::DEFAULT_QUEUE_SIZE);
-
-        if self._internal_buf.len() < SOME_NUMBER {
-            return Ok(input.as_ref().len() + size_of::<u32>());
+        if self._internal_buf.len() + input.as_ref().len() < DEFAULT_INTERNAL_BUF_SIZE {
+            self.flush()?;
         }
 
-        self.flush()
+        self._internal_buf
+            .extend((input.as_ref().len() as qpage::MsgLengthType).to_le_bytes());
+        self._internal_buf.extend_from_slice(input.as_ref());
+
+        return Ok(input.as_ref().len() + size_of::<qpage::MsgLengthType>());
     }
 
     pub fn push<T: AsRef<[u8]>>(&mut self, input: T) -> Result<usize, RingbufError> {
@@ -290,7 +289,7 @@ impl Reader {
         loop {
             match self.read_page.get_inner().try_pop(self.read_start_byte)? {
                 PopResult::Msg(m) => {
-                    self.read_start_byte += m.len() + size_of::<u32>();
+                    self.read_start_byte += m.len() + size_of::<qpage::MsgLengthType>();
                     return Ok(Some(String::from_utf8_lossy(m).to_string()));
                 }
                 PopResult::NoNewMsgs => return Ok(None),
@@ -331,7 +330,7 @@ fn seq_test() {
 
     eprintln!("took {} ms", now.elapsed().as_millis());
 
-    // std::fs::remove_dir_all(test_dir_path).unwrap();
+    std::fs::remove_dir_all(test_dir_path).unwrap();
 }
 
 #[test]

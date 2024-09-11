@@ -7,8 +7,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use mmap_wrapper::MmapMutWrapper;
 use static_assertions::const_assert;
 
-type MsgLengthType = u32;
-// const DEFAULT_QUEUE_SIZE: usize = 4 + 2_usize.pow(32) - 1;
+pub type MsgLengthType = u32;
 pub const DEFAULT_QUEUE_SIZE: usize = 4 + 2_usize.pow(28) - 1;
 pub const DEFAULT_MAX_MSG_SIZE: usize = 2_usize.pow(24) - 1;
 
