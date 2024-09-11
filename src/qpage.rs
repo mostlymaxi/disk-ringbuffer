@@ -1,5 +1,6 @@
+use core::slice;
 use std::cmp;
-use std::fmt::{Display, Pointer};
+use std::fmt::Display;
 use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -7,7 +8,7 @@ use mmap_wrapper::MmapMutWrapper;
 
 const DEFAULT_QUEUE_SIZE: usize = 4 + 2_usize.pow(32) - 1;
 // 0000 0001 0000 ....
-const QUEUE_MAGIC_NUM: usize = 0b1 << ((size_of::<usize>() * 8) - 8);
+const QUEUE_MAGIC_NUM: usize = 0b1 << (usize::BITS - 8);
 // 0000 0000 1111 ....
 const QUEUE_MAGIC_MASK: usize = QUEUE_MAGIC_NUM - 1;
 
@@ -151,8 +152,8 @@ impl QPage {
             Ordering::Relaxed,
         );
 
-        if start_idx & !QUEUE_MAGIC_MASK != 0 {
-            unreachable!("something went very very very wrong with the spinlock D:");
+        if ((start_idx + QUEUE_MAGIC_NUM) & !QUEUE_MAGIC_MASK) == 0 {
+            unreachable!("writers overflowed at idx: {:X}", start_idx);
         }
 
         let start_idx = start_idx & QUEUE_MAGIC_MASK;
@@ -163,8 +164,8 @@ impl QPage {
             // this only has to happen once
             if start_idx < DEFAULT_QUEUE_SIZE {
                 unsafe {
-                    let super_scary = self.buf.as_ptr() as *mut u8;
-                    self.buf[start_idx] = 0xFD;
+                    let super_scary_mut_buf = self.buf.as_ptr().cast_mut();
+                    *super_scary_mut_buf.add(start_idx) = 0xFD;
                 }
             }
 
@@ -174,10 +175,13 @@ impl QPage {
 
             return Ok(PushResult::PageFull);
         }
+        let super_scary_mutable_buf =
+            unsafe { slice::from_raw_parts_mut(self.buf.as_ptr().cast_mut(), self.buf.len()) };
 
-        self.buf[start_idx..start_idx + size_of::<u32>()]
+        super_scary_mutable_buf[start_idx..start_idx + size_of::<u32>()]
             .copy_from_slice(&(msg.len() as u32).to_le_bytes());
-        self.buf[start_idx + size_of::<u32>()..start_idx + size_of::<u32>() + msg.len()]
+        super_scary_mutable_buf
+            [start_idx + size_of::<u32>()..start_idx + size_of::<u32>() + msg.len()]
             .copy_from_slice(msg);
 
         self.write_idx_lock

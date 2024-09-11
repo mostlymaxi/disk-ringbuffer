@@ -131,10 +131,7 @@ pub fn new<P: Into<PathBuf>>(path: P, max_pages: usize) -> Result<(Writer, Reade
 
 impl Drop for Writer {
     fn drop(&mut self) {
-        eprintln!("ping");
         let _ = self.flush();
-
-        eprintln!("pong");
     }
 }
 
@@ -211,6 +208,7 @@ impl Writer {
                     .with_extension(PAGE_EXT)
                     .to_str()
                     .expect("this should always be unicode"),
+                // TODO: YOU SHOULD NOT PANIC ON DROP OMG MAXI
             );
         }
     }
@@ -320,7 +318,6 @@ fn lock_test() {
 fn seq_test() {
     let test_dir_path = "test-seq";
     let (mut tx, mut rx) = new(test_dir_path, 0).unwrap();
-    eprintln!("ping");
 
     let now = std::time::Instant::now();
     for i in 0..50_000_000 {
@@ -335,8 +332,6 @@ fn seq_test() {
     eprintln!("took {} ms", now.elapsed().as_millis());
 
     std::fs::remove_dir_all(test_dir_path).unwrap();
-
-    eprintln!("pong");
 }
 
 #[test]
