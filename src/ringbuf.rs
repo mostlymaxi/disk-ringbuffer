@@ -1,5 +1,6 @@
-use crate::qpage::{PopResult, PushResult, QPage};
+use crate::qpage::{self, PopResult, PushResult, QPage};
 use mmap_wrapper::{MmapMutWrapper, MmapWrapper};
+use static_assertions::const_assert;
 use std::fs::DirEntry;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
@@ -216,7 +217,9 @@ impl Writer {
         self._internal_buf.extend_from_slice(input.as_ref());
 
         // TODO: Updated SOME_NUMBER with bytes to buffer
-        const SOME_NUMBER: usize = 8192;
+        const SOME_NUMBER: usize = 512;
+        const_assert!(SOME_NUMBER < qpage::DEFAULT_QUEUE_SIZE);
+
         if self._internal_buf.len() < SOME_NUMBER {
             return Ok(input.as_ref().len() + size_of::<u32>());
         }
@@ -328,7 +331,7 @@ fn seq_test() {
 
     eprintln!("took {} ms", now.elapsed().as_millis());
 
-    std::fs::remove_dir_all(test_dir_path).unwrap();
+    // std::fs::remove_dir_all(test_dir_path).unwrap();
 }
 
 #[test]

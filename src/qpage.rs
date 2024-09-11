@@ -5,8 +5,14 @@ use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use mmap_wrapper::MmapMutWrapper;
+use static_assertions::const_assert;
 
-const DEFAULT_QUEUE_SIZE: usize = 4 + 2_usize.pow(32) - 1;
+type MsgLengthType = u32;
+// const DEFAULT_QUEUE_SIZE: usize = 4 + 2_usize.pow(32) - 1;
+pub const DEFAULT_QUEUE_SIZE: usize = 4 + 2_usize.pow(28) - 1;
+pub const DEFAULT_MAX_MSG_SIZE: usize = 2_usize.pow(24) - 1;
+
+const_assert!(DEFAULT_MAX_MSG_SIZE < MsgLengthType::MAX as usize);
 // 0000 0001 0000 ....
 const QUEUE_MAGIC_NUM: usize = 0b1 << (usize::BITS - 8);
 // 0000 0000 1111 ....
@@ -96,13 +102,13 @@ impl QPage {
             return Ok(PopResult::PageDone);
         }
 
-        let msg_len = u32::from_le_bytes(
-            self.buf[start_byte..start_byte + size_of::<u32>()]
+        let msg_len = MsgLengthType::from_le_bytes(
+            self.buf[start_byte..start_byte + size_of::<MsgLengthType>()]
                 .try_into()
                 .unwrap(),
         );
 
-        let start_byte = start_byte + size_of::<u32>();
+        let start_byte = start_byte + size_of::<MsgLengthType>();
         let end_byte = start_byte + msg_len as usize;
 
         Ok(PopResult::Msg(&self.buf[start_byte..end_byte]))
@@ -143,12 +149,12 @@ impl QPage {
     }
 
     pub fn try_push(&self, msg: &[u8]) -> Result<PushResult, Error> {
-        if msg.len() > u32::MAX as usize {
+        if msg.len() > DEFAULT_MAX_MSG_SIZE {
             return Err(Error::MsgTooLong);
         }
 
         let start_idx = self.write_idx_lock.fetch_add(
-            QUEUE_MAGIC_NUM + size_of::<u32>() + msg.len(),
+            QUEUE_MAGIC_NUM + size_of::<MsgLengthType>() + msg.len(),
             Ordering::Relaxed,
         );
 
@@ -159,7 +165,7 @@ impl QPage {
         let start_idx = start_idx & QUEUE_MAGIC_MASK;
 
         // checking if the queue has enough space
-        if start_idx + size_of::<u32>() + msg.len() >= DEFAULT_QUEUE_SIZE - 1 {
+        if start_idx + size_of::<MsgLengthType>() + msg.len() >= DEFAULT_QUEUE_SIZE - 1 {
             // adding marker that queue is full
             // this only has to happen once
             if start_idx < DEFAULT_QUEUE_SIZE {
@@ -178,15 +184,17 @@ impl QPage {
         let super_scary_mutable_buf =
             unsafe { slice::from_raw_parts_mut(self.buf.as_ptr().cast_mut(), self.buf.len()) };
 
-        super_scary_mutable_buf[start_idx..start_idx + size_of::<u32>()]
-            .copy_from_slice(&(msg.len() as u32).to_le_bytes());
-        super_scary_mutable_buf
-            [start_idx + size_of::<u32>()..start_idx + size_of::<u32>() + msg.len()]
+        super_scary_mutable_buf[start_idx..start_idx + size_of::<MsgLengthType>()]
+            .copy_from_slice(&(msg.len() as MsgLengthType).to_le_bytes());
+        super_scary_mutable_buf[start_idx + size_of::<MsgLengthType>()
+            ..start_idx + size_of::<MsgLengthType>() + msg.len()]
             .copy_from_slice(msg);
 
         self.write_idx_lock
             .fetch_sub(QUEUE_MAGIC_NUM, Ordering::Release);
 
-        Ok(PushResult::BytesWritten(msg.len() + size_of::<u32>()))
+        Ok(PushResult::BytesWritten(
+            msg.len() + size_of::<MsgLengthType>(),
+        ))
     }
 }
