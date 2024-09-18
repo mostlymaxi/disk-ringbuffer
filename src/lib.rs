@@ -15,7 +15,8 @@ use disk_ringbuffer::ringbuf;
 fn example() {
     // takes directory to use as ringbuf storage and the total number of pages to store as input.
     // note that each page takes 80Mb and setting the max_pages to zero implies an unbounded queue
-    let (mut tx, mut rx) = ringbuf::new("test-example", 2).unwrap();
+    let (mut tx, mut rx) = ringbuf::new("test-example");
+    ringbuf::set_max_qpage("text-example", 2);
 
     // you can clone readers and writers to use in other threads!
     let tx2 = tx.clone();
@@ -37,7 +38,7 @@ use disk_ringbuffer::ringbuf::new;
 
 fn thread_example() {
 
-    let (mut tx, mut rx) = new("test-thread-example", 2).unwrap();
+    let (mut tx, mut rx) = new("test-thread-example");
     let mut tx2 = tx.clone();
 
     let t = std::thread::spawn(move || {

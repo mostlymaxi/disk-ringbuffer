@@ -62,10 +62,51 @@ impl DiskRingInfo {
     }
 }
 
-impl<T> DiskRing<T> {
-    pub fn new() -> (DiskRing<Receiver>, DiskRing<Sender>) {
-        todo!()
-    }
+pub fn set_max_qpage<P: AsRef<Path>>(path: P, val: usize) {
+    let mut diskring_info = DiskRingInfo::new(path.as_ref().join(INFO_NAME));
+
+    let _qpage_count_lock = diskring_info
+        .get_inner()
+        .qpage_count
+        .write()
+        .expect("poisoned lock!");
+
+    diskring_info
+        .get_inner()
+        .max_qpages
+        .store(val, Ordering::Relaxed);
+}
+
+pub fn new<P: AsRef<Path>>(path: P) -> (DiskRing<Sender>, DiskRing<Receiver>) {
+    let _ = std::fs::create_dir_all(path.as_ref());
+
+    let qpage_no = get_qpage_count_static(&path);
+    let qpage = QPage::new(
+        path.as_ref()
+            .join(qpage_no.to_string())
+            .with_extension(PAGE_EXT),
+    );
+
+    let diskring_info = DiskRingInfo::new(path.as_ref().join(INFO_NAME));
+
+    (
+        DiskRing {
+            _kind: PhantomData,
+            path: path.as_ref().into(),
+            read_byte: 0,
+            diskring_info: diskring_info.clone(),
+            qpage: qpage.clone(),
+            qpage_no,
+        },
+        DiskRing {
+            _kind: PhantomData,
+            path: path.as_ref().into(),
+            read_byte: 0,
+            diskring_info,
+            qpage,
+            qpage_no,
+        },
+    )
 }
 
 impl Iterator for DiskRing<Receiver> {
@@ -77,6 +118,26 @@ impl Iterator for DiskRing<Receiver> {
 }
 
 impl DiskRing<Receiver> {
+    pub fn new<P: AsRef<Path>>(path: P) -> DiskRing<Receiver> {
+        let qpage_no = get_qpage_count_static(&path);
+        let qpage = QPage::new(
+            path.as_ref()
+                .join(qpage_no.to_string())
+                .with_extension(PAGE_EXT),
+        );
+
+        let diskring_info = DiskRingInfo::new(&path);
+
+        DiskRing {
+            _kind: PhantomData,
+            path: path.as_ref().into(),
+            read_byte: 0,
+            diskring_info: diskring_info.clone(),
+            qpage: qpage.clone(),
+            qpage_no,
+        }
+    }
+
     fn page_flip(&mut self) -> Result<(), RingbufError> {
         let max_qpages = self
             .diskring_info
@@ -125,6 +186,26 @@ impl DiskRing<Receiver> {
 }
 
 impl DiskRing<Sender> {
+    pub fn new<P: AsRef<Path>>(path: P) -> DiskRing<Receiver> {
+        let qpage_no = get_qpage_count_static(&path);
+        let qpage = QPage::new(
+            path.as_ref()
+                .join(qpage_no.to_string())
+                .with_extension(PAGE_EXT),
+        );
+
+        let diskring_info = DiskRingInfo::new(&path);
+
+        DiskRing {
+            _kind: PhantomData,
+            path: path.as_ref().into(),
+            read_byte: 0,
+            diskring_info: diskring_info.clone(),
+            qpage: qpage.clone(),
+            qpage_no,
+        }
+    }
+
     fn page_flip(&mut self) -> Result<(), std::io::Error> {
         let qpage_count = self
             .diskring_info
@@ -210,121 +291,120 @@ fn get_qpage_count_static<P: AsRef<Path>>(path: P) -> usize {
     *qpage_count
 }
 
-//#[test]
-//fn seq_test() {
-//    let test_dir_path = "test-seq";
-//    let (mut tx, mut rx) = new(test_dir_path, 0).unwrap();
-//
-//    let now = std::time::Instant::now();
-//    for i in 0..50_000_000 {
-//        tx.push(i.to_string()).unwrap();
-//    }
-//
-//    for i in 0..50_000_000 {
-//        let m = rx.pop().unwrap();
-//        assert_eq!(m, Some(i.to_string()));
-//    }
-//
-//    eprintln!("took {} ms", now.elapsed().as_millis());
-//
-//    std::fs::remove_dir_all(test_dir_path).unwrap();
-//}
-//
-//#[test]
-//fn seq_buffered_test() {
-//    let test_dir_path = "test-seq-buf";
-//    let (mut tx, mut rx) = new(test_dir_path, 0).unwrap();
-//
-//    let now = std::time::Instant::now();
-//    for i in 0..50_000_000 {
-//        tx.push_buffered(i.to_string()).unwrap();
-//    }
-//    tx.flush().unwrap();
-//
-//    for i in 0..50_000_000 {
-//        let m = rx.pop().unwrap();
-//        assert_eq!(m, Some(i.to_string()));
-//    }
-//
-//    eprintln!("took {} ms", now.elapsed().as_millis());
-//
-//    std::fs::remove_dir_all(test_dir_path).unwrap();
-//}
-//
-//#[test]
-//fn spsc_test() {
-//    let test_dir_path = "test-spsc";
-//    let (mut tx, mut rx) = new(test_dir_path, 0).unwrap();
-//
-//    let now = std::time::Instant::now();
-//    let t = std::thread::spawn(move || {
-//        for i in 0..50_000_000 {
-//            tx.push(i.to_string()).unwrap();
-//        }
-//    });
-//
-//    let mut i = 0;
-//    loop {
-//        if i == 50_000_000 {
-//            break;
-//        }
-//
-//        let m = match rx.pop().unwrap() {
-//            Some(m) => m,
-//            None => continue,
-//        };
-//
-//        assert_eq!(m, i.to_string());
-//        i += 1;
-//    }
-//
-//    t.join().unwrap();
-//
-//    eprintln!("took {} ms", now.elapsed().as_millis());
-//
-//    std::fs::remove_dir_all(test_dir_path).unwrap();
-//}
-//
-//#[test]
-//fn mpsc_test() {
-//    let test_dir_path = "test-mpsc";
-//    let num_threads = 4;
-//    let mut threads = Vec::new();
-//
-//    let (tx, mut rx) = new(test_dir_path, 0).unwrap();
-//
-//    let now = std::time::Instant::now();
-//
-//    for _ in 0..num_threads {
-//        let mut tx_clone = tx.clone();
-//        threads.push(std::thread::spawn(move || {
-//            for i in 0..50_000_000 / num_threads {
-//                tx_clone.push(i.to_string()).unwrap();
-//            }
-//        }));
-//    }
-//
-//    drop(tx);
-//
-//    let mut i = 0;
-//    loop {
-//        if i == 50_000_000 {
-//            break;
-//        }
-//
-//        let _m = match rx.pop().unwrap() {
-//            Some(_m) => _m,
-//            None => continue,
-//        };
-//
-//        i += 1;
-//    }
-//
-//    for t in threads {
-//        t.join().unwrap();
-//    }
-//
-//    eprintln!("took {} ms", now.elapsed().as_millis());
-//
-//    std::fs::remove_dir_all(test_dir_path).unwrap();
-//}
+#[test]
+fn seq_test() {
+    let test_dir_path = "test-seq";
+    let (mut tx, mut rx) = new(test_dir_path);
+
+    let now = std::time::Instant::now();
+    for i in 0..50_000_000 {
+        tx.push(i.to_string()).unwrap();
+    }
+
+    for i in 0..50_000_000 {
+        let m = rx.pop().unwrap();
+        assert_eq!(m, Some(i.to_string()));
+    }
+
+    eprintln!("took {} ms", now.elapsed().as_millis());
+
+    std::fs::remove_dir_all(test_dir_path).unwrap();
+}
+
+#[test]
+fn seq_buffered_test() {
+    let test_dir_path = "test-seq-buf";
+    let (mut tx, mut rx) = new(test_dir_path);
+
+    let now = std::time::Instant::now();
+    for i in 0..50_000_000 {
+        tx.push(i.to_string()).unwrap();
+    }
+
+    for i in 0..50_000_000 {
+        let m = rx.pop().unwrap();
+        assert_eq!(m, Some(i.to_string()));
+    }
+
+    eprintln!("took {} ms", now.elapsed().as_millis());
+
+    std::fs::remove_dir_all(test_dir_path).unwrap();
+}
+
+#[test]
+fn spsc_test() {
+    let test_dir_path = "test-spsc";
+    let (mut tx, mut rx) = new(test_dir_path);
+
+    let now = std::time::Instant::now();
+    let t = std::thread::spawn(move || {
+        for i in 0..50_000_000 {
+            tx.push(i.to_string()).unwrap();
+        }
+    });
+
+    let mut i = 0;
+    loop {
+        if i == 50_000_000 {
+            break;
+        }
+
+        let m = match rx.pop().unwrap() {
+            Some(m) => m,
+            None => continue,
+        };
+
+        assert_eq!(m, i.to_string());
+        i += 1;
+    }
+
+    t.join().unwrap();
+
+    eprintln!("took {} ms", now.elapsed().as_millis());
+
+    std::fs::remove_dir_all(test_dir_path).unwrap();
+}
+
+#[test]
+fn mpsc_test() {
+    let test_dir_path = "test-mpsc";
+    let num_threads = 4;
+    let mut threads = Vec::new();
+
+    let (tx, mut rx) = new(test_dir_path);
+
+    let now = std::time::Instant::now();
+
+    for _ in 0..num_threads {
+        let mut tx_clone = tx.clone();
+        threads.push(std::thread::spawn(move || {
+            for i in 0..50_000_000 / num_threads {
+                tx_clone.push(i.to_string()).unwrap();
+            }
+        }));
+    }
+
+    drop(tx);
+
+    let mut i = 0;
+    loop {
+        if i == 50_000_000 {
+            break;
+        }
+
+        let _m = match rx.pop().unwrap() {
+            Some(_m) => _m,
+            None => continue,
+        };
+
+        i += 1;
+    }
+
+    for t in threads {
+        t.join().unwrap();
+    }
+
+    eprintln!("took {} ms", now.elapsed().as_millis());
+
+    std::fs::remove_dir_all(test_dir_path).unwrap();
+}
