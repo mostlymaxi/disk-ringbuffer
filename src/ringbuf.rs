@@ -1,8 +1,11 @@
 use crate::qpage::{self, PopResult, PushResult, QPage};
+use fs4::fs_std::FileExt;
 use mmap_wrapper::MmapMutWrapper;
 use static_assertions::const_assert;
-use std::fs::DirEntry;
+use std::fs::{DirEntry, File};
+use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, RwLock};
 
 pub const DEFAULT_INTERNAL_BUF_SIZE: usize = 4096;
@@ -11,13 +14,12 @@ const_assert!(DEFAULT_INTERNAL_BUF_SIZE < qpage::DEFAULT_MAX_MSG_SIZE);
 /// A thread safe ringbuf receiver
 #[derive(Clone)]
 pub struct Reader {
+    info: MmapMutWrapper<ReaderInfo>,
     path: PathBuf,
-    write_page_count: Arc<RwLock<usize>>,
     read_page_no: usize,
     read_page: MmapMutWrapper<QPage>,
     read_start_byte: usize,
-    max_total_pages: usize,
-    _lock: Arc<fslock::LockFile>,
+    write_page_fslock: Arc<File>,
 }
 
 /// A thread safe ringbuf sender
@@ -31,151 +33,58 @@ pub struct Writer {
     _lock: Arc<fslock::LockFile>,
 }
 
-impl Clone for Writer {
-    fn clone(&self) -> Self {
-        Writer {
-            path: self.path.clone(),
-            write_page_count: self.write_page_count.clone(),
-            write_page_no: self.write_page_no,
-            write_page: self.write_page.clone(),
-            _internal_buf: Vec::new(),
-            max_total_pages: self.max_total_pages,
-            _lock: self._lock.clone(),
-        }
-    }
+struct Sender {}
+struct Receiver {}
+
+pub struct DiskRing<T> {
+    _kind: PhantomData<T>,
+    path: PathBuf,
+    qpage_turn_lock: Arc<File>,
+    qpage_no: usize,
+    qpage: MmapMutWrapper<QPage>,
+    diskring_info: MmapMutWrapper<DiskRingInfo>,
 }
 
-#[derive(thiserror::Error, Debug)]
-pub enum RingbufError {
-    #[error("invalid read")]
-    ReadError,
-    #[error(transparent)]
-    QError(#[from] crate::qpage::Error),
-    #[error(transparent)]
-    IoError(#[from] std::io::Error),
-    #[error("conflicting ringbuf path")]
-    RingbufExists,
+#[repr(C)]
+pub struct DiskRingInfo {
+    max_qpages: AtomicUsize,
+    qpage_count: RwLock<usize>,
 }
 
-const PAGE_EXT: &str = "page.bin";
-
-fn check_valid_page(entry: DirEntry) -> Option<usize> {
-    let path = entry.path();
-    let file_name = path.file_name()?;
-    let file_name = file_name.to_str()?;
-
-    if !file_name.ends_with(PAGE_EXT) {
-        return None;
-    }
-
-    let num = path.file_stem()?.to_str()?.parse().ok()?;
-
-    Some(num)
-}
-
-fn find_latest_page_num<P: AsRef<Path>>(path: P) -> Result<usize, RingbufError> {
-    Ok(std::fs::read_dir(path)?
-        .filter_map(|entry| entry.ok())
-        .flat_map(check_valid_page)
-        .max()
-        .unwrap_or(0))
-}
-
-pub fn new<P: Into<PathBuf>>(path: P, max_pages: usize) -> Result<(Writer, Reader), RingbufError> {
-    let path: PathBuf = path.into();
-    std::fs::create_dir_all(&path)?;
-
-    let mut file = fslock::LockFile::open(&path.join("rb.lock"))?;
-    if !file.try_lock()? {
-        return Err(RingbufError::RingbufExists);
-    }
-    let _lock = Arc::new(file);
-
-    let latest_file_no = find_latest_page_num(&path)?;
-    let wp_count = Arc::new(RwLock::new(latest_file_no));
-    let page = QPage::new(
-        path.join(latest_file_no.to_string())
-            .with_extension(PAGE_EXT)
-            .to_str()
-            .ok_or_else(|| {
-                std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    "can't convert extension to utf-8",
-                )
-            })?,
-    );
-
-    // TODO: reset on clone otherwise side effects
-    let _internal_buf = Vec::new();
-
-    Ok((
-        Writer {
-            path: path.clone(),
-            write_page_count: wp_count.clone(),
-            write_page_no: 0,
-            _internal_buf,
-            write_page: page.clone(),
-            max_total_pages: max_pages,
-            _lock: _lock.clone(),
-        },
-        Reader {
-            path,
-            write_page_count: wp_count,
-            read_page_no: 0,
-            read_page: page,
-            read_start_byte: 0,
-            max_total_pages: max_pages,
-            _lock,
-        },
-    ))
-}
-
-impl Drop for Writer {
-    fn drop(&mut self) {
-        let _ = self.flush();
-    }
-}
-
-impl Writer {
+impl<T> DiskRing<T> {}
+impl DiskRing<Receiver> {}
+impl DiskRing<Sender> {
     fn page_flip(&mut self) -> Result<(), std::io::Error> {
-        let page_count = self.write_page_count.read().expect("poisoned lock!");
+        let qpage_count = self.diskring_info.get_inner().qpage_count.read().expect("poisoned lock!");
 
-        if self.write_page_no < *page_count {
-            self.write_page_no += 1;
+        if self.qpage_no < *qpage_count {
+            self.qpage_no += 1;
             return Ok(());
         }
 
-        if self.write_page_no == *page_count {
-            drop(page_count);
+        if self.qpage_no == *qpage_count {
+            drop(qpage_count);
 
-            let mut page_count = self.write_page_count.write().expect("poisoned lock!");
+            let mut qpage_count = self.diskring_info.get_inner().qpage_count.write().expect("poisoned lock!");
 
-            if self.write_page_no < *page_count {
-                self.write_page_no += 1;
+            if self.qpage_no < *qpage_count {
+                self.qpage_no += 1;
                 return Ok(());
             }
 
-            *page_count += 1;
-            self.write_page_no += 1;
+            *qpage_count += 1;
+            self.qpage_no += 1;
 
             // setting max_total_pages to zero implies an unbounded ringbuf / queue
-            if self.max_total_pages == 0 {
+            if self.diskring_info.get_inner().max_qpages == 0 {
                 return Ok(());
             }
 
-            if *page_count >= self.max_total_pages {
+            if *qpage_count >= self.diskring_info.get_inner().max_qpages {
                 std::fs::remove_file(
                     self.path
-                        .join((*page_count - self.max_total_pages).to_string())
-                        .with_extension(PAGE_EXT)
-                        .to_str()
-                        .ok_or_else(|| {
-                            std::io::Error::new(
-                                std::io::ErrorKind::Other,
-                                "can't convert extension to utf-8",
-                            )
-                        })?,
-                )?
+                        .join((*qpage_count - self.diskring_info.get_inner().max_qpages.load(Ordering::Relaxed)).to_string())
+                        .with_extension(PAGE_EXT))?;
             }
         }
 
@@ -247,6 +156,123 @@ impl Writer {
     }
 }
 
+impl ReaderInfo {
+    pub fn new<P: AsRef<Path>>(path: P) -> MmapMutWrapper<ReaderInfo> {
+        let f = std::fs::File::options()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(path)
+            .unwrap();
+
+        let _ = f.set_len(std::mem::size_of::<ReaderInfo>() as u64);
+
+        let m = unsafe { memmap2::MmapMut::map_mut(&f).unwrap() };
+
+        unsafe { MmapMutWrapper::<ReaderInfo>::new(m) }
+    }
+}
+
+impl Clone for Writer {
+    fn clone(&self) -> Self {
+        Writer {
+            path: self.path.clone(),
+            write_page_count: self.write_page_count.clone(),
+            write_page_no: self.write_page_no,
+            write_page: self.write_page.clone(),
+            _internal_buf: Vec::new(),
+            max_total_pages: self.max_total_pages,
+            _lock: self._lock.clone(),
+        }
+    }
+}
+
+#[derive(thiserror::Error, Debug)]
+pub enum RingbufError {
+    #[error("invalid read")]
+    ReadError,
+    #[error(transparent)]
+    QError(#[from] crate::qpage::Error),
+    #[error(transparent)]
+    IoError(#[from] std::io::Error),
+    #[error("conflicting ringbuf path")]
+    RingbufExists,
+}
+
+const PAGE_EXT: &str = "page.bin";
+
+fn check_valid_page(entry: DirEntry) -> Option<usize> {
+    let path = entry.path();
+    let file_name = path.file_name()?;
+    let file_name = file_name.to_str()?;
+
+    if !file_name.ends_with(PAGE_EXT) {
+        return None;
+    }
+
+    let num = path.file_stem()?.to_str()?.parse().ok()?;
+
+    Some(num)
+}
+
+fn find_latest_page_num<P: AsRef<Path>>(path: P) -> Result<usize, RingbufError> {
+    Ok(std::fs::read_dir(path)?
+        .filter_map(|entry| entry.ok())
+        .flat_map(check_valid_page)
+        .max()
+        .unwrap_or(0))
+}
+
+pub fn new<P: Into<PathBuf>>(path: P, max_pages: usize) -> Result<(Writer, Reader), RingbufError> {
+    let path: PathBuf = path.into();
+    std::fs::create_dir_all(&path)?;
+
+    let latest_file_no = find_latest_page_num(&path)?;
+
+    let wp_count = Arc::new(RwLock::new(latest_file_no));
+    let page = QPage::new(
+        path.join(latest_file_no.to_string())
+            .with_extension(PAGE_EXT)
+            .to_str()
+            .ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    "can't convert extension to utf-8",
+                )
+            })?,
+    );
+
+    // TODO: reset on clone otherwise side effects
+    let _internal_buf = Vec::new();
+
+    Ok((
+        Writer {
+            path: path.clone(),
+            write_page_count: wp_count.clone(),
+            write_page_no: 0,
+            _internal_buf,
+            write_page: page.clone(),
+            max_total_pages: max_pages,
+        },
+        Reader {
+            path,
+            write_page_count: wp_count,
+            read_page_no: 0,
+            read_page: page,
+            read_start_byte: 0,
+            max_total_pages: max_pages,
+        },
+    ))
+}
+
+impl Drop for Writer {
+    fn drop(&mut self) {
+        let _ = self.flush();
+    }
+}
+
+impl Writer {
 impl Iterator for Reader {
     type Item = Result<Option<String>, RingbufError>;
 
