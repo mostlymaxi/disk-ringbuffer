@@ -44,7 +44,7 @@ pub struct DiskRingInfo {
 }
 
 impl DiskRingInfo {
-    fn new<P: AsRef<Path>>(path: P) -> MmapMutWrapper<DiskRingInfo> {
+    fn new<P: AsRef<Path>>(path: P) -> Result<MmapMutWrapper<DiskRingInfo>, RingbufError> {
         // fails when disk is full
         // or when parent directories don't exist
         let f = std::fs::File::options()
@@ -52,18 +52,17 @@ impl DiskRingInfo {
             .write(true)
             .create(true)
             .truncate(false)
-            .open(path)
-            .unwrap();
+            .open(path)?;
 
         let _ = f.set_len(std::mem::size_of::<Self>() as u64);
-        let m = unsafe { memmap2::MmapMut::map_mut(&f).unwrap() };
+        let m = unsafe { memmap2::MmapMut::map_mut(&f)? };
 
-        unsafe { MmapMutWrapper::<Self>::new(m) }
+        Ok(unsafe { MmapMutWrapper::<Self>::new(m) })
     }
 }
 
-pub fn set_max_qpage<P: AsRef<Path>>(path: P, val: usize) {
-    let mut diskring_info = DiskRingInfo::new(path.as_ref().join(INFO_NAME));
+pub fn set_max_qpage<P: AsRef<Path>>(path: P, val: usize) -> Result<(), RingbufError> {
+    let mut diskring_info = DiskRingInfo::new(path.as_ref().join(INFO_NAME))?;
 
     let _qpage_count_lock = diskring_info
         .get_inner()
@@ -75,10 +74,14 @@ pub fn set_max_qpage<P: AsRef<Path>>(path: P, val: usize) {
         .get_inner()
         .max_qpages
         .store(val, Ordering::Relaxed);
+
+    Ok(())
 }
 
-pub fn new<P: AsRef<Path>>(path: P) -> (DiskRing<Sender>, DiskRing<Receiver>) {
-    let _ = std::fs::create_dir_all(path.as_ref());
+pub fn new<P: AsRef<Path>>(
+    path: P,
+) -> Result<(DiskRing<Sender>, DiskRing<Receiver>), RingbufError> {
+    let _ = std::fs::create_dir_all(path.as_ref())?;
 
     let qpage_no = get_qpage_count_static(&path);
     let qpage = QPage::new(
@@ -87,9 +90,9 @@ pub fn new<P: AsRef<Path>>(path: P) -> (DiskRing<Sender>, DiskRing<Receiver>) {
             .with_extension(PAGE_EXT),
     );
 
-    let diskring_info = DiskRingInfo::new(path.as_ref().join(INFO_NAME));
+    let diskring_info = DiskRingInfo::new(path.as_ref().join(INFO_NAME))?;
 
-    (
+    Ok((
         DiskRing {
             _kind: PhantomData,
             path: path.as_ref().into(),
@@ -106,7 +109,7 @@ pub fn new<P: AsRef<Path>>(path: P) -> (DiskRing<Sender>, DiskRing<Receiver>) {
             qpage,
             qpage_no,
         },
-    )
+    ))
 }
 
 impl Iterator for DiskRing<Receiver> {
@@ -118,7 +121,7 @@ impl Iterator for DiskRing<Receiver> {
 }
 
 impl DiskRing<Receiver> {
-    pub fn new<P: AsRef<Path>>(path: P) -> DiskRing<Receiver> {
+    pub fn new<P: AsRef<Path>>(path: P) -> Result<DiskRing<Receiver>, RingbufError> {
         let qpage_no = get_qpage_count_static(&path);
         let qpage = QPage::new(
             path.as_ref()
@@ -126,16 +129,16 @@ impl DiskRing<Receiver> {
                 .with_extension(PAGE_EXT),
         );
 
-        let diskring_info = DiskRingInfo::new(&path);
+        let diskring_info = DiskRingInfo::new(&path)?;
 
-        DiskRing {
+        Ok(DiskRing {
             _kind: PhantomData,
             path: path.as_ref().into(),
             read_byte: 0,
             diskring_info: diskring_info.clone(),
             qpage: qpage.clone(),
             qpage_no,
-        }
+        })
     }
 
     fn page_flip(&mut self) -> Result<(), RingbufError> {
@@ -186,7 +189,7 @@ impl DiskRing<Receiver> {
 }
 
 impl DiskRing<Sender> {
-    pub fn new<P: AsRef<Path>>(path: P) -> DiskRing<Receiver> {
+    pub fn new<P: AsRef<Path>>(path: P) -> Result<DiskRing<Receiver>, RingbufError> {
         let qpage_no = get_qpage_count_static(&path);
         let qpage = QPage::new(
             path.as_ref()
@@ -194,16 +197,16 @@ impl DiskRing<Sender> {
                 .with_extension(PAGE_EXT),
         );
 
-        let diskring_info = DiskRingInfo::new(&path);
+        let diskring_info = DiskRingInfo::new(&path)?;
 
-        DiskRing {
+        Ok(DiskRing {
             _kind: PhantomData,
             path: path.as_ref().into(),
             read_byte: 0,
             diskring_info: diskring_info.clone(),
             qpage: qpage.clone(),
             qpage_no,
-        }
+        })
     }
 
     fn page_flip(&mut self) -> Result<(), std::io::Error> {
@@ -281,7 +284,10 @@ impl DiskRing<Sender> {
 }
 
 fn get_qpage_count_static<P: AsRef<Path>>(path: P) -> usize {
-    let mut diskring_info = DiskRingInfo::new(path.as_ref().join(INFO_NAME));
+    let Ok(mut diskring_info) = DiskRingInfo::new(path.as_ref().join(INFO_NAME)) else {
+        return 0;
+    };
+
     let qpage_count = diskring_info
         .get_inner()
         .qpage_count
@@ -294,7 +300,7 @@ fn get_qpage_count_static<P: AsRef<Path>>(path: P) -> usize {
 #[test]
 fn seq_test() {
     let test_dir_path = "test-seq";
-    let (mut tx, mut rx) = new(test_dir_path);
+    let (mut tx, mut rx) = new(test_dir_path).unwrap();
 
     let now = std::time::Instant::now();
     for i in 0..50_000_000 {
@@ -314,7 +320,7 @@ fn seq_test() {
 #[test]
 fn seq_buffered_test() {
     let test_dir_path = "test-seq-buf";
-    let (mut tx, mut rx) = new(test_dir_path);
+    let (mut tx, mut rx) = new(test_dir_path).unwrap();
 
     let now = std::time::Instant::now();
     for i in 0..50_000_000 {
@@ -334,7 +340,7 @@ fn seq_buffered_test() {
 #[test]
 fn spsc_test() {
     let test_dir_path = "test-spsc";
-    let (mut tx, mut rx) = new(test_dir_path);
+    let (mut tx, mut rx) = new(test_dir_path).unwrap();
 
     let now = std::time::Instant::now();
     let t = std::thread::spawn(move || {
@@ -371,7 +377,7 @@ fn mpsc_test() {
     let num_threads = 4;
     let mut threads = Vec::new();
 
-    let (tx, mut rx) = new(test_dir_path);
+    let (tx, mut rx) = new(test_dir_path).unwrap();
 
     let now = std::time::Instant::now();
 
