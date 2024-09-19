@@ -189,7 +189,7 @@ impl DiskRing<Receiver> {
 }
 
 impl DiskRing<Sender> {
-    pub fn new<P: AsRef<Path>>(path: P) -> Result<DiskRing<Receiver>, RingbufError> {
+    pub fn new<P: AsRef<Path>>(path: P) -> Result<DiskRing<Sender>, RingbufError> {
         let qpage_no = get_qpage_count_static(&path);
         let qpage = QPage::new(
             path.as_ref()
