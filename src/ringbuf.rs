@@ -68,7 +68,7 @@ pub fn set_max_qpage<P: AsRef<Path>>(path: P, val: usize) -> Result<(), RingbufE
         .get_inner()
         .qpage_count
         .write()
-        .expect("poisoned lock!");
+        .expect("unpoisoned lock");
 
     diskring_info
         .get_inner()
@@ -81,14 +81,14 @@ pub fn set_max_qpage<P: AsRef<Path>>(path: P, val: usize) -> Result<(), RingbufE
 pub fn new<P: AsRef<Path>>(
     path: P,
 ) -> Result<(DiskRing<Sender>, DiskRing<Receiver>), RingbufError> {
-    let _ = std::fs::create_dir_all(path.as_ref())?;
+    std::fs::create_dir_all(path.as_ref())?;
 
     let qpage_no = get_qpage_count_static(&path);
     let qpage = QPage::new(
         path.as_ref()
             .join(qpage_no.to_string())
             .with_extension(PAGE_EXT),
-    );
+    )?;
 
     let diskring_info = DiskRingInfo::new(path.as_ref().join(INFO_NAME))?;
 
@@ -127,7 +127,7 @@ impl DiskRing<Receiver> {
             path.as_ref()
                 .join(qpage_no.to_string())
                 .with_extension(PAGE_EXT),
-        );
+        )?;
 
         let diskring_info = DiskRingInfo::new(&path)?;
 
@@ -154,7 +154,7 @@ impl DiskRing<Receiver> {
                 .get_inner()
                 .qpage_count
                 .read()
-                .expect("poisoned lock!");
+                .expect("unpoisoned lock");
 
             self.qpage_no =
                 std::cmp::max(self.qpage_no + 1, qpage_count.saturating_sub(max_qpages));
@@ -167,7 +167,7 @@ impl DiskRing<Receiver> {
             self.path
                 .join(self.qpage_no.to_string())
                 .with_extension(PAGE_EXT),
-        );
+        )?;
 
         Ok(())
     }
@@ -195,7 +195,7 @@ impl DiskRing<Sender> {
             path.as_ref()
                 .join(qpage_no.to_string())
                 .with_extension(PAGE_EXT),
-        );
+        )?;
 
         let diskring_info = DiskRingInfo::new(&path)?;
 
@@ -215,7 +215,7 @@ impl DiskRing<Sender> {
             .get_inner()
             .qpage_count
             .read()
-            .expect("poisoned lock!");
+            .expect("unpoisoned lock");
 
         if self.qpage_no < *qpage_count {
             self.qpage_no += 1;
@@ -230,7 +230,7 @@ impl DiskRing<Sender> {
                 .get_inner()
                 .qpage_count
                 .write()
-                .expect("poisoned lock!");
+                .expect("unpoisoned lock");
 
             if self.qpage_no < *qpage_count {
                 self.qpage_no += 1;
@@ -275,10 +275,8 @@ impl DiskRing<Sender> {
             self.qpage = QPage::new(
                 self.path
                     .join(self.qpage_no.to_string())
-                    .with_extension(PAGE_EXT)
-                    .to_str()
-                    .expect("this should always be unicode"),
-            );
+                    .with_extension(PAGE_EXT),
+            )?;
         }
     }
 }
@@ -292,7 +290,7 @@ fn get_qpage_count_static<P: AsRef<Path>>(path: P) -> usize {
         .get_inner()
         .qpage_count
         .read()
-        .expect("poisoned lock!");
+        .expect("unpoisoned lock");
 
     *qpage_count
 }

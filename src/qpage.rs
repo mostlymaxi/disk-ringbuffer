@@ -48,20 +48,19 @@ pub enum PushResult {
 }
 
 impl QPage {
-    pub fn new<P: AsRef<Path>>(path: P) -> MmapMutWrapper<QPage> {
+    pub fn new<P: AsRef<Path>>(path: P) -> Result<MmapMutWrapper<QPage>, std::io::Error> {
         let f = std::fs::File::options()
             .read(true)
             .write(true)
             .create(true)
             .truncate(false)
-            .open(path)
-            .unwrap();
+            .open(path)?;
 
         let _ = f.set_len(std::mem::size_of::<QPage>() as u64);
 
-        let m = unsafe { memmap2::MmapMut::map_mut(&f).unwrap() };
+        let m = unsafe { memmap2::MmapMut::map_mut(&f)? };
 
-        unsafe { MmapMutWrapper::<QPage>::new(m) }
+        Ok(unsafe { MmapMutWrapper::<QPage>::new(m) })
     }
 
     fn get_write_idx_spin(&self, start_byte: usize) -> usize {
@@ -105,7 +104,7 @@ impl QPage {
         let msg_len = MsgLengthType::from_le_bytes(
             self.buf[start_byte..start_byte + size_of::<MsgLengthType>()]
                 .try_into()
-                .unwrap(),
+                .expect("byte slice conversion"),
         );
 
         let start_byte = start_byte + size_of::<MsgLengthType>();
