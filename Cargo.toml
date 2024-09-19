@@ -1,12 +1,12 @@
 [package]
 name = "disk-ringbuffer"
-version = "0.6.1"
+version = "0.7.1"
 edition = "2021"
 authors = ["Maxi Saparov <max.saparov@gmail.com>"]
 description = "lock free on disk ringbuffer to be used in the implementation of Franz"
 documentation = "https://docs.rs/disk-ringbuffer"
-homepage = "https://github.com/MostlyMax/disk-ringbuffer"
-repository = "https://github.com/MostlyMax/disk-ringbuffer"
+homepage = "https://github.com/MostlyMaxi/disk-ringbuffer"
+repository = "https://github.com/MostlyMaxi/disk-ringbuffer"
 readme = "README.md"
 keywords = ["ringbuffer", "queue"]
 license = "MIT"
@@ -14,8 +14,6 @@ categories = ["database-implementations", "data-structures"]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-fs4 = "0.9.1"
-fslock = "0.2.1"
 memmap2 = "0.9.4"
 mmap-wrapper = "2.0.1"
 static_assertions = "1.1.0"
