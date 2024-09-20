@@ -129,7 +129,7 @@ impl DiskRing<Receiver> {
                 .with_extension(PAGE_EXT),
         )?;
 
-        let diskring_info = DiskRingInfo::new(&path)?;
+        let diskring_info = DiskRingInfo::new(path.as_ref().join(INFO_NAME))?;
 
         Ok(DiskRing {
             _kind: PhantomData,
@@ -197,7 +197,7 @@ impl DiskRing<Sender> {
                 .with_extension(PAGE_EXT),
         )?;
 
-        let diskring_info = DiskRingInfo::new(&path)?;
+        let diskring_info = DiskRingInfo::new(path.as_ref().join(INFO_NAME))?;
 
         Ok(DiskRing {
             _kind: PhantomData,
