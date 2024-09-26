@@ -61,7 +61,19 @@ impl DiskRingInfo {
     }
 }
 
-pub fn set_max_qpage<P: AsRef<Path>>(path: P, val: usize) -> Result<(), RingbufError> {
+pub fn get_or_update_max_qpage<P: AsRef<Path>>(path: P, val: usize) -> Result<usize, RingbufError> {
+    let mut diskring_info = DiskRingInfo::new(path.as_ref().join(INFO_NAME))?;
+
+    let curr_max_qpages = diskring_info.get_inner().max_qpages.load(Ordering::Relaxed);
+
+    if val == curr_max_qpages {
+        return Ok(val);
+    }
+
+    set_max_qpage(path, val)
+}
+
+pub fn set_max_qpage<P: AsRef<Path>>(path: P, val: usize) -> Result<usize, RingbufError> {
     let mut diskring_info = DiskRingInfo::new(path.as_ref().join(INFO_NAME))?;
 
     let _qpage_count_lock = diskring_info
@@ -70,12 +82,10 @@ pub fn set_max_qpage<P: AsRef<Path>>(path: P, val: usize) -> Result<(), RingbufE
         .write()
         .expect("unpoisoned lock");
 
-    diskring_info
+    Ok(diskring_info
         .get_inner()
         .max_qpages
-        .store(val, Ordering::Relaxed);
-
-    Ok(())
+        .swap(val, Ordering::Relaxed))
 }
 
 pub fn new<P: AsRef<Path>>(
