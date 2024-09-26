@@ -1,6 +1,6 @@
 [package]
 name = "disk-ringbuffer"
-version = "0.7.3"
+version = "0.7.4"
 edition = "2021"
 authors = ["Maxi Saparov <max.saparov@gmail.com>"]
 description = "lock free on disk ringbuffer to be used in the implementation of Franz"
